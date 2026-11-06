@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""n56patcher.py — iPhone 6 Plus (N56AP) 第二系统 patcher 大脚本。
+"""n56patcher.py — iPhone 6 (N61AP) 第二系统 patcher 大脚本。
+
+默认目标为 n61-ios13（iPhone 6）；iPhone 6 Plus（N56AP）用 --target n56-ios13。
 
 架构：A + feature 标签。读目标清单(targets/<name>.py)与 patch 注册表(patches/)，
 按 feature 与依赖关系选挂；本地 donors/ 提供固件，tools/ 提供上游工具。
@@ -19,7 +21,7 @@
   status        ramdisk 下列出各卷 apfs_role                       [需 ramdisk]
 
 用法：
-  sudo python3 n56patcher.py install --target n56-ios13
+  sudo python3 n56patcher.py install --target n61-ios13
   python3 n56patcher.py build && python3 n56patcher.py boot
   python3 n56patcher.py list
   python3 n56patcher.py build --dry-run
@@ -327,7 +329,7 @@ def build_parser():
     p.add_argument("stage", choices=[
         "ramdisk", "extract-im4m", "volumes", "rootfs", "patch-rootfs",
         "build", "boot", "install", "all", "list", "status"])
-    p.add_argument("--target", default="n56-ios13", help="目标清单名（targets/<name>.py）")
+    p.add_argument("--target", default="n61-ios13", help="目标清单名（targets/<name>.py）")
     p.add_argument("--features", default=None,
                    help="逗号分隔，覆盖清单的 features 选挂")
     p.add_argument("--patches", default=None,

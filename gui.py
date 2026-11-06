@@ -29,12 +29,18 @@ from core import patch as patchmod
 SUDO_STAGES = {"rootfs", "install", "all"}
 STAGES = ["ramdisk", "extract-im4m", "volumes", "rootfs",
           "patch-rootfs", "build", "boot", "all", "status", "list"]
+# 默认目标：iPhone 6（N61AP）。iPhone 6 Plus 仍可用 --target n56-ios13 选。
+DEFAULT_TARGET = "n61-ios13"
 
 
 def list_targets():
     out = [fn[:-3].replace("_", "-") for fn in sorted(os.listdir(TARGETS_DIR))
            if fn.endswith(".py") and not fn.startswith("_")]
-    return out or ["n56-ios13"]
+    # 默认目标排在最前，下拉框的第一项就是它
+    if DEFAULT_TARGET in out:
+        out.remove(DEFAULT_TARGET)
+        out.insert(0, DEFAULT_TARGET)
+    return out or [DEFAULT_TARGET]
 
 
 def target_features(name):
@@ -397,7 +403,7 @@ input:focus-visible+.sw{outline:2px solid var(--amber);outline-offset:2px}
 </svg>
 
 <header class="top">
- <div class="plate"><span class="model">N56</span><div><h1>n56-patcher</h1><span data-i18n="sub"></span></div></div>
+ <div class="plate"><span class="model">N61</span><div><h1>n56-patcher</h1><span data-i18n="sub"></span></div></div>
  <label class="tgt"><span class="lab" data-i18n="target"></span><span class="sel"><select id="target" autocomplete="off"></select></span></label>
  <label class="tgt"><span class="lab" data-i18n="lang"></span><span class="sel lang"><select id="lang" autocomplete="off"></select></span></label>
  <div class="readout" id="pill" data-s="idle"><i></i><b id="pilltext" role="status"></b><time id="pilltime">--:--</time></div>
@@ -476,7 +482,7 @@ input:focus-visible+.sw{outline:2px solid var(--amber);outline-offset:2px}
 const STAGES=%STAGES%;
 const I18N={
  "zh-CN":{
-  sub:"iPhone 6 Plus · 第二系统 iOS 13.7",lang:"语言",target:"目标",stop:"停止",stopping:"停止中…",
+  sub:"iPhone 6 · 第二系统 iOS 13.7",lang:"语言",target:"目标",stop:"停止",stopping:"停止中…",
   chain:"启动链",chainHint:"节点状态只记录本次服务运行期间的结果，不代表设备实际状态",stepAria:"当前步骤",closeNotice:"关闭提示",
   combos:"一键组合",console:"控制台",copy:"复制",copied:"已复制",copyFail:"复制失败",clear:"清屏",clearTitle:"只清空显示，不影响后端缓冲",jump:"回到底部",logEmpty:"尚无输出。选中阶段并点击执行后，日志会显示在这里。",
   openOpts:"打开选项",options:"选项",close:"关闭",restore:"恢复默认",selectAll:"全选",featNone:"未选 feature：仅构建基础层。",featHint:"功能选择用于构建、自动构建启动和安装阶段，真实依赖自动补齐。",
@@ -507,7 +513,7 @@ const I18N={
   }
  },
  "en":{
-  sub:"iPhone 6 Plus · Second system iOS 13.7",lang:"Language",target:"Target",stop:"Stop",stopping:"Stopping…",
+  sub:"iPhone 6 · Second system iOS 13.7",lang:"Language",target:"Target",stop:"Stop",stopping:"Stopping…",
   chain:"Boot chain",chainHint:"Node status only reflects results from this server session, not the actual device state",stepAria:"Current step",closeNotice:"Dismiss notice",
   combos:"Combos",console:"Console",copy:"Copy",copied:"Copied",copyFail:"Copy failed",clear:"Clear",clearTitle:"Clears the display only, not the server buffer",jump:"Back to bottom",logEmpty:"No output yet. Select a stage and run it to see logs here.",
   openOpts:"Open options",options:"Options",close:"Close",restore:"Restore defaults",selectAll:"Select all",featNone:"No features selected: only the base layer is built.",featHint:"Feature selection applies to the build, auto-build boot and install stages. Real dependencies are added automatically.",
@@ -538,7 +544,7 @@ const I18N={
   }
  },
  "zh-TW":{
-  sub:"iPhone 6 Plus · 第二系統 iOS 13.7",lang:"語言",target:"目標",stop:"停止",stopping:"停止中…",
+  sub:"iPhone 6 · 第二系統 iOS 13.7",lang:"語言",target:"目標",stop:"停止",stopping:"停止中…",
   chain:"啟動鏈",chainHint:"節點狀態只記錄本次服務執行期間的結果，不代表裝置實際狀態",stepAria:"目前步驟",closeNotice:"關閉提示",
   combos:"一鍵組合",console:"主控台",copy:"複製",copied:"已複製",copyFail:"複製失敗",clear:"清除",clearTitle:"只清除顯示，不影響後端緩衝",jump:"回到底部",logEmpty:"尚無輸出。選取階段並點擊執行後，日誌會顯示在這裡。",
   openOpts:"開啟選項",options:"選項",close:"關閉",restore:"恢復預設",selectAll:"全選",featNone:"未選 feature：僅建置基礎層。",featHint:"功能選擇用於建置、自動建置啟動和安裝階段，實際相依項目自動補齊。",
@@ -569,7 +575,7 @@ const I18N={
   }
  },
  "ja":{
-  sub:"iPhone 6 Plus · セカンドシステム iOS 13.7",lang:"言語",target:"ターゲット",stop:"停止",stopping:"停止中…",
+  sub:"iPhone 6 · セカンドシステム iOS 13.7",lang:"言語",target:"ターゲット",stop:"停止",stopping:"停止中…",
   chain:"ブートチェーン",chainHint:"ノードの状態はこのサーバー実行中の結果のみで、デバイスの実際の状態ではありません",stepAria:"現在のステップ",closeNotice:"通知を閉じる",
   combos:"ワンクリック",console:"コンソール",copy:"コピー",copied:"コピーしました",copyFail:"コピー失敗",clear:"クリア",clearTitle:"表示のみクリアし、サーバーのバッファには影響しません",jump:"一番下へ",logEmpty:"出力はまだありません。ステージを選択して実行すると、ここにログが表示されます。",
   openOpts:"オプションを開く",options:"オプション",close:"閉じる",restore:"デフォルトに戻す",selectAll:"すべて選択",featNone:"feature 未選択：ベースレイヤーのみビルドします。",featHint:"機能の選択はビルド、自動ビルド起動、インストールの各ステージに適用され、依存関係は自動で補完されます。",
@@ -1099,7 +1105,7 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/api/targets":
             return self._send(200, list_targets())
         if u.path == "/api/features":
-            t = parse_qs(u.query).get("target", ["n56-ios13"])[0]
+            t = parse_qs(u.query).get("target", [DEFAULT_TARGET])[0]
             sel, allf = target_features(t)
             return self._send(200, {"sel": sel, "all": allf})
         if u.path == "/api/log":
@@ -1128,7 +1134,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _build_args(self, b):
         a = [sys.executable, os.path.join(REPO, "n56patcher.py"), b["stage"],
-             "--target", b.get("target", "n56-ios13")]
+             "--target", b.get("target", DEFAULT_TARGET)]
         if "features" in b and b["stage"] in ("build", "boot", "patch-rootfs", "install", "all", "list"):
             a += ["--features", ",".join(b["features"])]
         if b.get("dry"):

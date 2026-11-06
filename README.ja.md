@@ -2,16 +2,18 @@
 
 # n56-patcher
 
-**iPhone 6 Plus（N56AP / iPhone7,1）で iOS 13.7 をセカンドシステムとして動かすためのビルド・インストールツール**
+**iPhone 6（N61AP / iPhone7,2）で iOS 13.7 をセカンドシステムとして動かすためのビルド・インストールツール**
 
 [简体中文](README.md) · [English](README.en.md) · [繁體中文](README.zh-TW.md) · 日本語
 
-![Device](https://img.shields.io/badge/Device-iPhone%206%20Plus-0A84FF?style=flat-square&logo=apple&logoColor=white)
+![Device](https://img.shields.io/badge/Device-iPhone%206-0A84FF?style=flat-square&logo=apple&logoColor=white)
 ![iOS](https://img.shields.io/badge/iOS-13.7%20(17H35)-5E5CE6?style=flat-square)
 ![Host](https://img.shields.io/badge/Host-macOS%20%2B%20Xcode-30363D?style=flat-square)
 ![Language](https://img.shields.io/badge/Python-3-3776AB?style=flat-square&logo=python&logoColor=white)
 
 [クイックスタート](#クイックスタート) · [機能](#機能) · [高度な使い方](#高度な使い方) · [作者](#作者) · [プロジェクトの支援](#プロジェクトの支援)
+
+<sub>同じ手順は iPhone 6 Plus（N56AP / iPhone7,1）にも使えます。`--target n56-ios13` で切り替えます。</sub>
 
 </div>
 
@@ -19,7 +21,7 @@
 
 デフォルトでは、クリーンな J96 カーネルから KC を再構築し、iBSS、iBEC、DeviceTree、TrustCache も生成します（ブートイメージは計 5 つ）。カーネルと DeviceTree の変換は本リポジトリの `patches/impl/` を直接呼び出し、ファームウェアの入力はローカルの `donors/` に置きます。
 
-プロジェクトは最初から最後まで動作を確認済みで、最終的なブートパッケージにはハードウェア対応、DataB の復号、checkra1n が含まれます。技術的な結論は [docs/conclusions.md](docs/conclusions.md)（中国語）を参照してください。
+プロジェクトは最初から最後まで動作を確認済みで、最終的なブートパッケージにはハードウェア対応、DataB の復号、checkra1n が含まれます。技術的な結論は [docs/conclusions.md](docs/conclusions.md)、iPhone 6 の移植記録は [docs/n61-porting.md](docs/n61-porting.md)（いずれも中国語）を参照してください。
 
 > [!WARNING]
 > このツールはデバイス上にボリュームを作成し、システムを書き込みます。事前にバックアップを取ってください。本プロジェクトは Apple とは無関係で、現状のまま提供されます。使用に伴うリスクは利用者が負うものとします。
@@ -48,9 +50,10 @@ cd tools/SSHRD_Script && ./sshrd.sh 12.5.8
 以下のファイルを Apple からダウンロードし、ファイル名を変えずに `ipsw/` に置きます：
 
 ```text
-ipsw/iPhone_5.5_12.5.8_16H88_Restore.ipsw          # N56、tools/extract_ipsw.py で使用
-ipsw/iPhone_5.5_13.7_17H35_Restore.ipsw            # N66
-ipsw/iPad_64bit_TouchID_13.7_17H35_Restore.ipsw    # J96
+ipsw/iPhone_4.7_12.5.8_16H88_Restore.ipsw          # N61 実機の 12.5.8：iBSS/iBEC/カーネル/DeviceTree/無線ファーム
+ipsw/iPhone_5.5_13.7_17H35_Restore.ipsw            # N66：13.7 カーネルのベース
+ipsw/iPhone_4.7_13.7_17H35_Restore.ipsw            # N71：4.7" の UI リソース（ui_donor）
+ipsw/iPad_64bit_TouchID_13.7_17H35_Restore.ipsw    # J96：クリーンな KC と TrustCache
 ```
 
 初めて rootfs が必要になったときに DMG を `ipsw/cache/` へ展開し、以降はそれを再利用します。
@@ -116,17 +119,17 @@ python3 n56patcher.py boot --workdir build/current
 
 ```text
 クリーンな J96 KC → 汎用ブートパッチ → D2207 PMU 対応 → SN2400 → Chestnut
-                  → N56 タッチ → Wi-Fi → DRV2604 → SEP 互換 → CS42L67
+                  → N61 タッチ → Wi-Fi → DRV2604 → SEP 互換 → CS42L67
                   → complzss + watchtower → boot_KC.img4
 ```
 
-DeviceTree は N56 iOS 12 と N66 iOS 13 の元の JSONC から再構築します。
+DeviceTree は実機の 12.5.8（N61 iOS 12）と N66 iOS 13 の元の JSONC から再構築します。
 
 TrustCache は repair-v7 の完全なセットをベースに、その場で生成した mrm、最終的な Health ライブラリ、Bluetooth/SEP サービス、結合 dyld cache の cdhash を追加します。
 
 Health オーバーレイは、まず N66 17H35 から対象 50 バンドルの非 Mach-O リソースをすべて配置し、次に repair-v7 で修正したバイナリで上書きします。これにより Core Data モデル、plist、素材、ローカライズファイルの完全性を保ちます。
 
-`ui` オーバーレイは N66 17H35 から Health、電話、Wallet を配置し、不足または内容の異なる iPhone Settings のリソースと設定バンドルのバイナリをすべて上書きして、起動ロゴ、アプリアイコン、壁紙を補います。アプリ本体は N66 iOS 13.7 由来のものだけを受け付けます。
+`ui` オーバーレイは UI donor（4.7" は N71、5.5" は N66）の 17H35 から Health、電話、Wallet を配置し、不足または内容の異なる iPhone Settings のリソースと設定バンドルのバイナリをすべて上書きして、起動ロゴ、アプリアイコン、壁紙を補います。donor に `@3x` しかない場合は `@2x` を使います。アプリ本体は 13.7 donor 由来のものだけを受け付けます。
 
 クリーンビルドの KC、iBSS、DeviceTree は実機のブートパッケージとバイト単位で一致します。iBEC は boot-args を内包しており、デフォルトでは `serial=3` を含みません。シリアルログが必要な場合は `--bootargs` で上書きしてください。TrustCache は同じビルドで書き込んだ rootfs と対になるため、インストール済みのデバイスは自身のブートパッケージを使い続けます。詳しくは[技術的な結論](docs/conclusions.md#trustcache-配套)（中国語）を参照してください。
 
@@ -167,7 +170,7 @@ DataB はデフォルトで暗号化コンテンツ保護が有効で、イン�
 
 インストールフローは、空の Application コンテナセットに対する `installd` の処理も修正し、最初の無料署名アプリをインストールできるようにします。
 
-オーバーレイは SystemA と N66/J96 の rootfs から直接生成します。IPSW が `ipsw/` にない場合は、パスを明示的に渡せます：
+オーバーレイは SystemA（N61 12.5.8）、UI donor、J96 の rootfs から直接生成します。IPSW が `ipsw/` にない場合は、パスを明示的に渡せます：
 
 ```sh
 sudo python3 n56patcher.py install \
@@ -175,7 +178,7 @@ sudo python3 n56patcher.py install \
   --j96-ipsw /path/to/iPad_64bit_TouchID_13.7_17H35_Restore.ipsw
 ```
 
-現在の profile は SystemA 16H88、N66/J96 17H35 に対応します。フローは build、主要ファイルのダイジェスト、すべてのバイトパッチの元の内容を検証します。
+現在の profile は SystemA 16H88（N61）、N66/N71/J96 17H35 に対応します。フローは build、主要ファイルのダイジェスト、すべてのバイトパッチの元の内容を検証します。
 
 </details>
 

@@ -2,16 +2,18 @@
 
 # n56-patcher
 
-**iPhone 6 Plus（N56AP / iPhone7,1）的 iOS 13.7 第二系統建置與安裝工具**
+**iPhone 6（N61AP / iPhone7,2）的 iOS 13.7 第二系統建置與安裝工具**
 
 [简体中文](README.md) · [English](README.en.md) · 繁體中文 · [日本語](README.ja.md)
 
-![Device](https://img.shields.io/badge/Device-iPhone%206%20Plus-0A84FF?style=flat-square&logo=apple&logoColor=white)
+![Device](https://img.shields.io/badge/Device-iPhone%206-0A84FF?style=flat-square&logo=apple&logoColor=white)
 ![iOS](https://img.shields.io/badge/iOS-13.7%20(17H35)-5E5CE6?style=flat-square)
 ![Host](https://img.shields.io/badge/Host-macOS%20%2B%20Xcode-30363D?style=flat-square)
 ![Language](https://img.shields.io/badge/Python-3-3776AB?style=flat-square&logo=python&logoColor=white)
 
 [快速開始](#快速開始) · [功能](#功能) · [進階用法](#進階用法) · [作者](#作者) · [支持專案](#支持專案)
+
+<sub>同一套流程也適用於 iPhone 6 Plus（N56AP / iPhone7,1），加上 `--target n56-ios13` 切換。</sub>
 
 </div>
 
@@ -19,7 +21,7 @@
 
 預設從乾淨的 J96 核心重建 KC，同時產生 iBSS、iBEC、DeviceTree、TrustCache，共五個啟動映像。核心和裝置樹轉換直接呼叫本儲存庫的 `patches/impl/`，韌體輸入放在本機 `donors/`。
 
-專案已從頭到尾跑通，最終啟動包包含硬體適配、DataB 解密和 checkra1n。技術結論見 [docs/conclusions.md](docs/conclusions.md)（簡體中文）。
+專案已從頭到尾跑通，最終啟動包包含硬體適配、DataB 解密和 checkra1n。技術結論見 [docs/conclusions.md](docs/conclusions.md)，iPhone 6 的移植紀錄見 [docs/n61-porting.md](docs/n61-porting.md)（皆為簡體中文）。
 
 > [!WARNING]
 > 本工具會在裝置上建立磁碟區並寫入系統，操作前請自行備份。本專案與 Apple 無關，按現狀提供，風險由使用者自行承擔。
@@ -48,9 +50,10 @@ cd tools/SSHRD_Script && ./sshrd.sh 12.5.8
 從 Apple 下載以下檔案，檔名不變，放入 `ipsw/`：
 
 ```text
-ipsw/iPhone_5.5_12.5.8_16H88_Restore.ipsw          # N56，供 tools/extract_ipsw.py 使用
-ipsw/iPhone_5.5_13.7_17H35_Restore.ipsw            # N66
-ipsw/iPad_64bit_TouchID_13.7_17H35_Restore.ipsw    # J96
+ipsw/iPhone_4.7_12.5.8_16H88_Restore.ipsw          # N61 本機 12.5.8：iBSS/iBEC/核心/裝置樹/無線韌體
+ipsw/iPhone_5.5_13.7_17H35_Restore.ipsw            # N66：13.7 核心基底
+ipsw/iPhone_4.7_13.7_17H35_Restore.ipsw            # N71：4.7" UI 資源（ui_donor）
+ipsw/iPad_64bit_TouchID_13.7_17H35_Restore.ipsw    # J96：乾淨 KC 與 TrustCache
 ```
 
 首次需要 rootfs 時，流程會把 DMG 解壓到 `ipsw/cache/`，之後直接重複使用。
@@ -116,17 +119,17 @@ python3 n56patcher.py boot --workdir build/current
 
 ```text
 乾淨 J96 KC → 通用啟動補丁 → D2207 PMU 適配 → SN2400 → Chestnut
-            → N56 觸控 → Wi-Fi → DRV2604 → SEP 相容 → CS42L67
+            → N61 觸控 → Wi-Fi → DRV2604 → SEP 相容 → CS42L67
             → complzss + watchtower → boot_KC.img4
 ```
 
-DeviceTree 從 N56 iOS 12 與 N66 iOS 13 原始 JSONC 重建。
+DeviceTree 從本機 12.5.8（N61 iOS 12）與 N66 iOS 13 原始 JSONC 重建。
 
 TrustCache 以 repair-v7 完整集合為基底，加入現場產生的 mrm、最終 Health 函式庫、藍牙/SEP 服務和組合 dyld cache cdhash。
 
 Health 覆蓋層先從 N66 17H35 部署 50 個目標 bundle 的全部非 Mach-O 資源，再覆蓋 repair-v7 修復後的二進位檔，確保 Core Data model、plist、素材和本地化檔案完整。
 
-`ui` 覆蓋層從 N66 17H35 部署 Health、電話、Wallet，覆蓋所有缺失或內容不同的 iPhone Settings 資源與設定 bundle 二進位檔，並補齊啟動 Logo、App 圖示和桌布。App 本體只接受 N66 iOS 13.7 來源。
+`ui` 覆蓋層從 UI donor（4.7" 用 N71，5.5" 用 N66）17H35 部署 Health、電話、Wallet，覆蓋所有缺失或內容不同的 iPhone Settings 資源與設定 bundle 二進位檔，並補齊啟動 Logo、App 圖示和桌布；donor 只有 `@3x` 時自動退到 `@2x`。App 本體只接受 13.7 donor 來源。
 
 乾淨建置的 KC、iBSS、DeviceTree 與實機啟動包逐位元組一致；iBEC 內嵌 boot-args，預設已移除 `serial=3`。需要序列埠日誌時用 `--bootargs` 覆蓋。TrustCache 與同一次建置寫入的 rootfs 配套，已安裝裝置繼續使用自己的啟動包，見[技術結論](docs/conclusions.md#trustcache-配套)（簡體中文）。
 
@@ -167,7 +170,7 @@ python3 n56patcher.py boot --workdir build/current
 
 安裝流程會修正 `installd` 對空 Application 容器集合的處理，使第一個免費簽名 App 可以完成安裝。
 
-覆蓋層直接從 SystemA 與 N66/J96 rootfs 產生。IPSW 不在 `ipsw/` 時可明確傳入路徑：
+覆蓋層直接從 SystemA（N61 12.5.8）、UI donor 與 J96 rootfs 產生。IPSW 不在 `ipsw/` 時可明確傳入路徑：
 
 ```sh
 sudo python3 n56patcher.py install \
@@ -175,7 +178,7 @@ sudo python3 n56patcher.py install \
   --j96-ipsw /path/to/iPad_64bit_TouchID_13.7_17H35_Restore.ipsw
 ```
 
-目前 profile 對應 SystemA 16H88、N66/J96 17H35。流程會檢查 build、關鍵檔案摘要和所有位元組補丁的原始內容。
+目前 profile 對應 SystemA 16H88（N61）、N66/N71/J96 17H35。流程會檢查 build、關鍵檔案摘要和所有位元組補丁的原始內容。
 
 </details>
 

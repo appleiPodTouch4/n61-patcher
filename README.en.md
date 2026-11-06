@@ -2,16 +2,18 @@
 
 # n56-patcher
 
-**Build and install tool for running iOS 13.7 as a second system on iPhone 6 Plus (N56AP / iPhone7,1)**
+**Build and install tool for running iOS 13.7 as a second system on iPhone 6 (N61AP / iPhone7,2)**
 
 [简体中文](README.md) · English · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md)
 
-![Device](https://img.shields.io/badge/Device-iPhone%206%20Plus-0A84FF?style=flat-square&logo=apple&logoColor=white)
+![Device](https://img.shields.io/badge/Device-iPhone%206-0A84FF?style=flat-square&logo=apple&logoColor=white)
 ![iOS](https://img.shields.io/badge/iOS-13.7%20(17H35)-5E5CE6?style=flat-square)
 ![Host](https://img.shields.io/badge/Host-macOS%20%2B%20Xcode-30363D?style=flat-square)
 ![Language](https://img.shields.io/badge/Python-3-3776AB?style=flat-square&logo=python&logoColor=white)
 
 [Quick start](#quick-start) · [Features](#features) · [Advanced usage](#advanced-usage) · [Author](#author) · [Support the project](#support-the-project)
+
+<sub>The same flow also supports iPhone 6 Plus (N56AP / iPhone7,1); switch with `--target n56-ios13`.</sub>
 
 </div>
 
@@ -19,7 +21,7 @@
 
 By default, the tool rebuilds the KC from a clean J96 kernel and also generates iBSS, iBEC, DeviceTree and TrustCache, for five boot images in total. Kernel and DeviceTree transforms call `patches/impl/` in this repository directly, and firmware inputs live in the local `donors/` directory.
 
-The project has been run end to end. The final boot bundle includes the hardware adaptation, DataB decryption and checkra1n. Technical conclusions are in [docs/conclusions.md](docs/conclusions.md) (Chinese).
+The project has been run end to end. The final boot bundle includes the hardware adaptation, DataB decryption and checkra1n. Technical conclusions are in [docs/conclusions.md](docs/conclusions.md) and the iPhone 6 porting notes in [docs/n61-porting.md](docs/n61-porting.md) (both Chinese).
 
 > [!WARNING]
 > This tool creates volumes and writes system files on your device, so back up first. This project is not affiliated with Apple. It is provided as is, and you use it at your own risk.
@@ -48,9 +50,10 @@ cd tools/SSHRD_Script && ./sshrd.sh 12.5.8
 Download these files from Apple, keep the file names unchanged, and put them in `ipsw/`:
 
 ```text
-ipsw/iPhone_5.5_12.5.8_16H88_Restore.ipsw          # N56, used by tools/extract_ipsw.py
-ipsw/iPhone_5.5_13.7_17H35_Restore.ipsw            # N66
-ipsw/iPad_64bit_TouchID_13.7_17H35_Restore.ipsw    # J96
+ipsw/iPhone_4.7_12.5.8_16H88_Restore.ipsw          # N61, the device's own 12.5.8 (iBSS/iBEC/kernel/DeviceTree/Wi-Fi FW)
+ipsw/iPhone_5.5_13.7_17H35_Restore.ipsw            # N66, the 13.7 kernel base
+ipsw/iPhone_4.7_13.7_17H35_Restore.ipsw            # N71, 4.7" UI resources (ui_donor)
+ipsw/iPad_64bit_TouchID_13.7_17H35_Restore.ipsw    # J96, clean KC and TrustCache
 ```
 
 The first time a rootfs is needed, the flow extracts the DMG to `ipsw/cache/` and reuses it afterwards.
@@ -116,17 +119,17 @@ Build chain:
 
 ```text
 Clean J96 KC → generic boot patches → D2207 PMU adaptation → SN2400 → Chestnut
-             → N56 touch → Wi-Fi → DRV2604 → SEP compatibility → CS42L67
+             → N61 touch → Wi-Fi → DRV2604 → SEP compatibility → CS42L67
              → complzss + watchtower → boot_KC.img4
 ```
 
-DeviceTree is rebuilt from the original N56 iOS 12 and N66 iOS 13 JSONC.
+DeviceTree is rebuilt from the device's own 12.5.8 (N61 iOS 12) and N66 iOS 13 original JSONC.
 
 TrustCache starts from the full repair-v7 set, then adds the mrm generated on site, the final Health libraries, the Bluetooth/SEP services and the combined dyld cache cdhash.
 
 The Health overlay first deploys all non-Mach-O resources of the 50 target bundles from N66 17H35, then overwrites them with the binaries fixed by repair-v7, which keeps the Core Data models, plists, assets and localizations complete.
 
-The `ui` overlay deploys Health, Phone and Wallet from N66 17H35, overwrites every missing or differing iPhone Settings resource and settings bundle binary, and adds the boot logo, app icons and wallpapers. App bodies are only accepted from N66 iOS 13.7.
+The `ui` overlay deploys Health, Phone and Wallet from the UI donor (N71 for 4.7", N66 for 5.5") 17H35, overwrites every missing or differing iPhone Settings resource and settings bundle binary, and adds the boot logo, app icons and wallpapers; when the donor only carries `@3x`, the `@2x` variant is used. App bodies are only accepted from a 13.7 donor.
 
 KC, iBSS and DeviceTree from a clean build are byte-identical to the on-device boot bundle. iBEC embeds the boot-args, which no longer include `serial=3` by default; override them with `--bootargs` when you need serial logs. TrustCache is paired with the rootfs written by the same build, so an installed device keeps using its own boot bundle. See the [technical conclusions](docs/conclusions.md#trustcache-配套) (Chinese).
 
@@ -167,7 +170,7 @@ DataB uses encrypted content protection by default, and the install flow creates
 
 The install flow also corrects how `installd` handles an empty Application container set, so the first free-signed app can install.
 
-Overlays are generated directly from SystemA and the N66/J96 rootfs. If the IPSWs are not in `ipsw/`, pass their paths explicitly:
+Overlays are generated directly from SystemA (N61 12.5.8), the UI donor and the J96 rootfs. If the IPSWs are not in `ipsw/`, pass their paths explicitly:
 
 ```sh
 sudo python3 n56patcher.py install \
@@ -175,7 +178,7 @@ sudo python3 n56patcher.py install \
   --j96-ipsw /path/to/iPad_64bit_TouchID_13.7_17H35_Restore.ipsw
 ```
 
-The current profile targets SystemA 16H88 and N66/J96 17H35. The flow checks the build, key file digests and the original bytes of every byte patch.
+The current profile targets SystemA 16H88 (N61) and N66/N71/J96 17H35. The flow checks the build, key file digests and the original bytes of every byte patch.
 
 </details>
 

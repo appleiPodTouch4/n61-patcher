@@ -105,16 +105,21 @@ class Context:
         return path
 
     def ensure_derived(self):
-        """缺少从 IPSW 生成的输入时，现场生成。"""
+        """缺少从 IPSW 生成的输入时，现场生成。
+
+        产物清单与 IPSW 条目由目标清单的 extract 块声明，因此 n56/n61 共用
+        ipsw/cache/ 但产物目录不同，互相不会覆盖。
+        """
         sys.path.insert(0, os.path.join(REPO, "tools"))
         try:
             import extract_ipsw
         finally:
             sys.path.pop(0)
-        if all(os.path.exists(os.path.join(DERIVED_DIR, rel)) for rel in extract_ipsw.OUTPUTS):
+        if all(os.path.exists(os.path.join(DERIVED_DIR, rel))
+               for rel in extract_ipsw.outputs(self.t)):
             return
         log.log("从 IPSW 生成构建输入…")
-        extract_ipsw.generate(self.ipsw_input("n56"), self.ipsw_input("n66"), self.ipsw_input("j96"))
+        extract_ipsw.generate(self.t, self.ipsw_input)
 
     def derived(self, key):
         rel = self.t["derived"].get(key)
@@ -134,8 +139,10 @@ class Context:
             import extract_ipsw
         finally:
             sys.path.pop(0)
+        profile = self.t["extract"]["iboot"]["profile"]
         log.log("解密 iBSS/iBEC：设备需处于 DFU…")
-        extract_ipsw.decrypt_iboot(self.ipsw_input("n56"), self.tool("gaster"), self.tool("iBoot64Patcher"))
+        extract_ipsw.decrypt_iboot(self.t, self.ipsw_input(profile),
+                                   self.tool("gaster"), self.tool("iBoot64Patcher"))
 
     def donor(self, key):
         if key in self.t.get("derived", {}):
@@ -238,7 +245,9 @@ class Context:
         except Exception as exc:
             log.die(f"无法读取 SystemA 版本: {exc}")
         actual = version.get("ProductBuildVersion")
-        expected = self.t.get("source_profiles", {}).get("n56", {}).get("build")
+        # 本机 SystemA 对应的 profile 由 device.model 推导（n56ap → n56、n61ap → n61）
+        key = self.t.get("device", {}).get("model", "").replace("ap", "")
+        expected = self.t.get("source_profiles", {}).get(key, {}).get("build")
         if expected and actual != expected:
             log.die(f"SystemA build 为 {actual}，当前 profile 需要 {expected}")
         self._device_system_verified = True

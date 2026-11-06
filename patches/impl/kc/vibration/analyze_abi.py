@@ -6,11 +6,11 @@ import struct
 import sys
 
 HERE = Path(__file__).resolve().parent
-from paths import ROOT, DERIVED, INPUT, OUTPUT
+from paths import ROOT, DERIVED, INPUT, OUTPUT, N56
 from macho import Kernel
 from port import instructions
 
-DONOR = DERIVED / 'extracted/n56ap_ios12/kernelcache.release.iphone7.decompressed'
+DONOR = N56   # 本机 12.5.8 内核（n56ap / n61ap 由 N56_BOARD 决定）
 BASELINE = INPUT
 CODE_START = 0xfffffff0086ee8f0
 CODE_END = 0xfffffff0086efc68

@@ -4,12 +4,14 @@ import argparse
 import base64
 import hashlib
 import json
+import os
 from pathlib import Path
 import struct
 import sys
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parents[2]))
+# paths.py 在 patches/impl/（HERE.parents[1]）；HERE.parents[2] 是 patches/，导入会失败。
+sys.path.insert(0, str(HERE.parents[1]))
 from paths import DERIVED, INPUT as BASELINE, N56
 sys.path.insert(0, str(HERE.parent / 'sn2400'))
 from macho import Kernel
@@ -17,11 +19,32 @@ from port import check_region
 
 HEADER = 0xfffffff006dc3fa8
 STORAGE = 0xfffffff007002400
-OLD_HASHES = {
-    'C-4345__s-B1/barbera.trx': '642a167ef77bf15c966aaf31dea3828ae2cbf7644042ccee9f952bbe3ab59329',
-    'C-4345__s-B1/barbera.clmb': 'a822598bc118af9d41a37bb410b530476380e81cffc76ea544c656fadfdf6fe0',
-    'C-4345__s-B1/barbera.txcb': 'd550c1887860959076896cbee5adb7d7d09dfc956f15949476eb0a63708d5087',
+
+# 每个板子用的 B1 模块与 j96 13.7 已批准（hashstore 内）的摘要。
+# 两个模块在 j96 内核里都有条目，长度也一致，因此只需换名与摘要。
+B1_MODULES = {
+    'n56ap': {
+        'module': 'barbera',
+        'approved': {
+            'trx': '642a167ef77bf15c966aaf31dea3828ae2cbf7644042ccee9f952bbe3ab59329',
+            'clmb': 'a822598bc118af9d41a37bb410b530476380e81cffc76ea544c656fadfdf6fe0',
+            'txcb': 'd550c1887860959076896cbee5adb7d7d09dfc956f15949476eb0a63708d5087',
+        },
+    },
+    'n61ap': {
+        'module': 'tempranillo',
+        'approved': {
+            'trx': '642a167ef77bf15c966aaf31dea3828ae2cbf7644042ccee9f952bbe3ab59329',
+            'clmb': '528ce0d7e01f098fac7446914f9161b68a76a3e728ea57421cbdca26166b798b',
+            'txcb': 'cb476938a5f3517643a674dbe33d6f742993449b82d9adf37fedd1e5ae2d2118',
+        },
+    },
 }
+
+BOARD = os.environ.get('N56_BOARD', 'n56ap')
+SPEC = B1_MODULES[BOARD]
+OLD_HASHES = {f'C-4345__s-B1/{SPEC["module"]}.{ext}': digest
+              for ext, digest in SPEC['approved'].items()}
 
 
 def sha(data):
@@ -79,12 +102,20 @@ def native_files():
 def adapt(k, files=None, storage=STORAGE):
     files = native_files() if files is None else files
     before = read_index(k)
+    names = list(OLD_HASHES)
+    # 已批准与否要看 hashstore 里的摘要是否等于板上固件本身，而不是只等于 j96 的基线值：
+    # n61ap 的 tempranillo 与 j96 的同一文件名长度相同但内容不同，只比较基线会漏改，
+    # 结果是固件装载时摘要校验失败、AppleBCMWLANCore 的 FirmwareLoaded 一直为 No。
+    if all(before[path_key(n)]['digest'].hex() == files[n]['sha256']
+           and before[path_key(n)]['length'] == files[n]['bytes'] for n in names):
+        return bytearray(k.data), dict(storage=None, storage_size=0, edits=[],
+                                       new_slide_slots=[], already_approved=True,
+                                       unchanged_filename_mappings=len(before))
     host = next(s for s in k.segs if s['name'] == '__PLK_DATA_CONST')
     check_region(storage, 0x98, host['vm'], k.read(host['vm'], host['fs']), k.claims())
     native_slots = set(k.slide_slots())
     data = bytearray(k.data)
     edits = []
-    names = list(OLD_HASHES)
     for i, name in enumerate(names):
         old = before[path_key(name)]
         item = files[name]
@@ -154,7 +185,8 @@ def build(output_dir, input_path=BASELINE):
         if bytes.fromhex(item['sha256']) not in native:
             raise ValueError('native payload digest is absent from its original kernel')
     data, report = adapt(k)
-    add_slide_slots(k, data, report['new_slide_slots'])
+    if report['new_slide_slots']:
+        add_slide_slots(k, data, report['new_slide_slots'])
     path = output_dir / 'kernelcache.wifi.raw'
     path.write_bytes(data)
     actual = Kernel(path)

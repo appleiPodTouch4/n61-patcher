@@ -1,12 +1,24 @@
 #!/usr/bin/env python3
 """从 ipsw/ 下的 IPSW 生成构建输入，输出到 ipsw/cache/derived/。
 
-产物与此前的固件提取物逐字节一致。需要先运行 tools/setup.py。
+输入文件与产物路径由目标清单（targets/<name>.py）声明：
+
+  source_profiles   每个 profile 一个 IPSW（build 用于校验）
+  extract.kernels   [profile, IPSW 内条目, 产物相对路径]  解 IM4P → 裸内核
+  extract.devicetrees 同上，再转成 JSONC
+  extract.copies    [profile, IPSW 内条目, 产物相对路径]  原样拷贝
+  extract.wifi      从某个 profile 的 rootfs DMG 取无线固件目录
+  extract.iboot     解密 iBSS/iBEC（需设备在 DFU）
+
+因此 n56 与 n61 共用 ipsw/cache/，产物目录互不覆盖。
+需要先运行 tools/setup.py（img4 与 devicetree-parse）。
 """
 import argparse
 from pathlib import Path
+import plistlib
 import shutil
 import subprocess
+import sys
 import tempfile
 import zipfile
 
@@ -14,25 +26,22 @@ REPO = Path(__file__).resolve().parents[1]
 IMG4 = REPO / 'tools/img4lib/img4'
 DT_PARSE = REPO / 'tools/devicetree-parse/devicetree-parse'
 OUT = REPO / 'ipsw/cache/derived'
-N56 = 'iPhone_5.5_12.5.8_16H88_Restore.ipsw'
-N66 = 'iPhone_5.5_13.7_17H35_Restore.ipsw'
-J96 = 'iPad_64bit_TouchID_13.7_17H35_Restore.ipsw'
-N56_ROOTFS = '038-87140-057.dmg'
-WIFI = 'usr/share/firmware/wifi/C-4345__s-B1'
-WIFI_FILES = ('barbera.trx', 'barbera.clmb', 'barbera.txcb')
-OUTPUTS = (
-    'extracted/n56ap_ios12/kernelcache.release.iphone7.decompressed',
-    'extracted/n56ap_ios12/DeviceTree.n56ap.jsonc',
-    'extracted/n66ap_ios13/kernelcache.release.n66.decompressed',
-    'extracted/n66ap_ios13/DeviceTree.n66ap.jsonc',
-    'extracted/j96ap_ios13/kernelcache.release.ipad5',
-    'extracted/j96ap_ios13/038-68261-036.dmg.trustcache',
-    *(f'wifi/C-4345__s-B1/{name}' for name in WIFI_FILES),
-)
 
 
 def run(*cmd):
     subprocess.run([str(c) for c in cmd], check=True)
+
+
+def outputs(target):
+    """目标声明的全部派生产物（相对 ipsw/cache/derived）。"""
+    spec = target.get('extract', {})
+    result = [rel for _, _, rel in spec.get('kernels', ())]
+    result += [rel for _, _, rel in spec.get('devicetrees', ())]
+    result += [rel for _, _, rel in spec.get('copies', ())]
+    wifi = spec.get('wifi')
+    if wifi:
+        result += [f"{wifi['dest']}/{name}" for name in wifi['files']]
+    return result
 
 
 def extract_member(ipsw, member, work):
@@ -62,57 +71,104 @@ def make_devicetree(ipsw, member, dest, work):
         subprocess.run([str(DT_PARSE), str(binary)], stdout=f, check=True)
 
 
-def copy_wifi(ipsw, dest, work):
-    dmg = extract_member(ipsw, N56_ROOTFS, work)
-    mountpoint = work / 'n56-rootfs'
+def copy_wifi(ipsw, entry, srcdir, dest, files, work):
+    dmg = extract_member(ipsw, entry, work)
+    mountpoint = work / 'rootfs'
     mountpoint.mkdir()
     run('hdiutil', 'attach', '-readonly', '-nobrowse', '-mountpoint', mountpoint, dmg)
     try:
+        source_dir = mountpoint / srcdir
+        if not source_dir.is_dir():
+            raise SystemExit(f'IPSW rootfs 缺少无线固件目录: {srcdir}')
         dest.mkdir(parents=True, exist_ok=True)
-        for name in WIFI_FILES:
-            shutil.copyfile(mountpoint / WIFI / name, dest / name)
+        for name in files:
+            source = source_dir / name
+            if not source.is_file():
+                raise SystemExit(f'{srcdir} 缺少 {name}')
+            shutil.copy2(source, dest / name)
     finally:
         run('hdiutil', 'detach', mountpoint)
 
 
-def decrypt_iboot(ipsw, gaster, patcher, out=OUT):
+def generate(target, ipsw_for, out=OUT):
+    """按目标清单生成派生输入。ipsw_for(profile) → IPSW 绝对路径。"""
+    spec = target.get('extract', {})
+    if not spec:
+        raise SystemExit(f"{target['name']} 未声明 extract 块")
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        for profile, member, rel in spec.get('devicetrees', ()):
+            print(f'  DeviceTree  {profile}: {rel}')
+            make_devicetree(ipsw_for(profile), member, out / rel, work)
+        for profile, member, rel in spec.get('kernels', ()):
+            print(f'  Kernel      {profile}: {rel}')
+            make_kernel(ipsw_for(profile), member, out / rel, work)
+        for profile, member, rel in spec.get('copies', ()):
+            print(f'  Copy        {profile}: {rel}')
+            copy_member(ipsw_for(profile), member, out / rel, work)
+        wifi = spec.get('wifi')
+        if wifi:
+            print(f"  Wi-Fi       {wifi['profile']}: {wifi['dest']}")
+            copy_wifi(ipsw_for(wifi['profile']), wifi['rootfs_entry'], wifi['srcdir'],
+                      out / wifi['dest'], wifi['files'], work)
+    return out
+
+
+def decrypt_iboot(target, ipsw, gaster, patcher, out=OUT):
     """解密 iBSS/iBEC 并给 iBSS 打补丁。设备需处于 DFU（密钥由设备 AES 引擎解开）。"""
-    dest = out / 'extracted/n56ap_ios12'
+    spec = target['extract']['iboot']
+    dest = out / spec['out_dir']
     dest.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
-        ibss = extract_member(ipsw, 'Firmware/dfu/iBSS.n56.RELEASE.im4p', work)
-        ibec = extract_member(ipsw, 'Firmware/dfu/iBEC.n56.RELEASE.im4p', work)
+        ibss = extract_member(ipsw, spec['ibss'], work)
+        ibec = extract_member(ipsw, spec['ibec'], work)
         run(gaster, 'pwn')
         run(gaster, 'decrypt', ibss, work / 'iBSS.dec')
-        run(gaster, 'decrypt', ibec, dest / 'iBEC.n56.dec')
-        subprocess.run([str(patcher), str(work / 'iBSS.dec'), str(dest / 'iBSS.n56.patched')], check=False)
-        if not (dest / 'iBSS.n56.patched').exists():
+        run(gaster, 'decrypt', ibec, dest / spec['ibec_name'])
+        patched = dest / spec['ibss_name']
+        subprocess.run([str(patcher), str(work / 'iBSS.dec'), str(patched)], check=False)
+        if not patched.exists():
             raise SystemExit('iBoot64Patcher 未生成 iBSS')
 
 
-def generate(n56, n66, j96, out=OUT):
-    extracted = out / 'extracted'
-    with tempfile.TemporaryDirectory() as tmp:
-        work = Path(tmp)
-        make_kernel(n56, 'kernelcache.release.iphone7', extracted / 'n56ap_ios12/kernelcache.release.iphone7.decompressed', work)
-        make_devicetree(n56, 'Firmware/all_flash/DeviceTree.n56ap.im4p', extracted / 'n56ap_ios12/DeviceTree.n56ap.jsonc', work)
-        make_kernel(n66, 'kernelcache.release.n66', extracted / 'n66ap_ios13/kernelcache.release.n66.decompressed', work)
-        make_devicetree(n66, 'Firmware/all_flash/DeviceTree.n66ap.im4p', extracted / 'n66ap_ios13/DeviceTree.n66ap.jsonc', work)
-        copy_member(j96, 'kernelcache.release.ipad5', extracted / 'j96ap_ios13/kernelcache.release.ipad5', work)
-        copy_member(j96, 'Firmware/038-68261-036.dmg.trustcache', extracted / 'j96ap_ios13/038-68261-036.dmg.trustcache', work)
-        copy_wifi(n56, out / 'wifi/C-4345__s-B1', work)
+def load_target(name):
+    sys.path.insert(0, str(REPO))
+    from core.context import load_target as _load
+    return _load(name)
+
+
+def ipsw_resolver(target, overrides):
+    def resolve(profile):
+        if profile in overrides:
+            return Path(overrides[profile])
+        entry = target.get('source_profiles', {}).get(profile)
+        if not entry:
+            raise SystemExit(f'目标清单未声明 profile: {profile}')
+        path = REPO / 'ipsw' / entry['ipsw']
+        if not path.is_file():
+            raise SystemExit(f'找不到 {profile} IPSW: {path}')
+        with zipfile.ZipFile(path) as archive:
+            restore = plistlib.loads(archive.read('Restore.plist'))
+        build = restore.get('ProductBuildVersion') or \
+            restore.get('BuildIdentities', [{}])[0].get('Info', {}).get('BuildNumber')
+        if entry.get('build') and build != entry['build']:
+            raise SystemExit(f"{profile} IPSW build 为 {build}，目标需要 {entry['build']}")
+        return path
+    return resolve
 
 
 def main():
-    ipsw = REPO / 'ipsw'
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--n56-ipsw', type=Path, default=ipsw / N56)
-    parser.add_argument('--n66-ipsw', type=Path, default=ipsw / N66)
-    parser.add_argument('--j96-ipsw', type=Path, default=ipsw / J96)
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('--target', default='n56-ios13', help='目标清单名（targets/<name>.py）')
+    parser.add_argument('--ipsw', action='append', default=[],
+                        metavar='PROFILE=PATH', help='覆盖某个 profile 的 IPSW 路径')
     parser.add_argument('--out', type=Path, default=OUT)
     args = parser.parse_args()
-    generate(args.n56_ipsw, args.n66_ipsw, args.j96_ipsw, args.out)
+    overrides = dict(item.split('=', 1) for item in args.ipsw)
+    target = load_target(args.target)
+    generate(target, ipsw_resolver(target, overrides), args.out)
     print('derived inputs ready:', args.out.resolve())
 
 

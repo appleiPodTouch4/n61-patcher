@@ -5,14 +5,14 @@ from pathlib import Path
 import struct
 import sys
 
-from paths import ROOT, DERIVED, INPUT
+from paths import ROOT, DERIVED, INPUT, N56
 HERE = Path(__file__).resolve().parent
 from macho import Kernel
 from masked_match import masked, func_bytes
 from capstone import Cs, CS_ARCH_ARM64, CS_MODE_LITTLE_ENDIAN
 from capstone.arm64_const import ARM64_OP_IMM, ARM64_OP_MEM, ARM64_OP_REG
 
-SOURCE = DERIVED / 'extracted/n56ap_ios12/kernelcache.release.iphone7.decompressed'
+SOURCE = N56   # 本机 12.5.8 内核（按 N56_BOARD 取 n56ap / n61ap）
 TARGET = INPUT
 MASK64 = (1 << 64) - 1
 

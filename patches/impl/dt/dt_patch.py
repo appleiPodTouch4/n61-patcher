@@ -47,14 +47,15 @@ import subprocess
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from paths import DERIVED, OUTPUT
+from paths import BOARD, DERIVED, DT12, MODEL, OUTPUT, N66 as _N66_KERNEL  # noqa: F401
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 EXTRACTED = str(DERIVED / "extracted")
-N56_JSONC = os.path.join(EXTRACTED, "n56ap_ios12", "DeviceTree.n56ap.jsonc")
+# 本机 12.5.8 设备树（N56AP / N61AP，由 N56_BOARD 决定）
+N56_JSONC = str(DT12)
 N66_JSONC = os.path.join(EXTRACTED, "n66ap_ios13", "DeviceTree.n66ap.jsonc")
-OUT_JSONC = str(OUTPUT / "DeviceTree.n56_native.jsonc")
-OUT_BIN = str(OUTPUT / "DeviceTree.n56_native.bin")
+OUT_JSONC = str(OUTPUT / f"DeviceTree.{BOARD}_native.jsonc")
+OUT_BIN = str(OUTPUT / f"DeviceTree.{BOARD}_native.bin")
 
 # ---- role configuration (must match on-disk APFS volume roles) -------------
 # Stock iOS 13 values; s4/s5 superblocks are patched to match (see docstring).
@@ -208,7 +209,7 @@ def port_filesystems(tree: dict):
 
 
 def patch_native():
-    print(f"Loading native N56AP DeviceTree: {N56_JSONC}")
+    print(f"Loading native {BOARD.upper()} DeviceTree: {N56_JSONC}")
     tree = load_jsonc(N56_JSONC)
     root = tree["device-tree"]
 
@@ -253,17 +254,17 @@ def patch_native():
         add_prop(sep_nub, "rom-panic-bytes", 0, 4, 1)
         print("  ✓ Added rom-panic-bytes to /arm-io/sep/iop-sep-nub")
 
-    # 4. Patch touch compatibility alias (multi-touch,n56 -> add multi-touch,j96 fallback)
+    # 4. Patch touch compatibility alias (multi-touch,<model> -> add multi-touch,j96 fallback)
     touch_node = find_node_by_path(root, ["arm-io", "spi2", "multi-touch"])
     if touch_node:
         add_prop(
             touch_node,
             "compatible",
-            "multi-touch,n56\x00multi-touch,j96\x00",
+            f"multi-touch,{MODEL}\x00multi-touch,j96\x00",
             32,
             4,
         )
-        print("  ✓ Added multi-touch,j96 alias to /arm-io/spi2/multi-touch")
+        print(f"  ✓ Added multi-touch,{MODEL} + multi-touch,j96 alias to /arm-io/spi2/multi-touch")
 
         # Drop function-power_ana (analog supply for the touch controller).
         # Its provider is display-pmu,chestnut (phandle 0x4b), a TI display PMU
@@ -321,12 +322,12 @@ def patch_native():
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Build the N56 iOS 13 DeviceTree")
+    parser = argparse.ArgumentParser(description=f"Build the {BOARD} iOS 13 DeviceTree")
     parser.add_argument("--repack", required=True)
     parser.add_argument("--out", type=Path, default=OUTPUT)
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
-    OUT_JSONC = str(args.out / "DeviceTree.n56_native.jsonc")
-    OUT_BIN = str(args.out / "DeviceTree.n56_native.bin")
+    OUT_JSONC = str(args.out / f"DeviceTree.{BOARD}_native.jsonc")
+    OUT_BIN = str(args.out / f"DeviceTree.{BOARD}_native.bin")
     repack_tool = args.repack
     patch_native()

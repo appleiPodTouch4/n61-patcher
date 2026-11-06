@@ -1,4 +1,7 @@
-from core.overlay import SourceItem, SourceOverlay
+import os
+
+from core import log
+from core.overlay import SourceOverlay, resolve_ui_items
 
 
 PATHS = (
@@ -42,6 +45,11 @@ PATHS = (
 class UiResources(SourceOverlay):
     id = "rootfs.ui_resources"
     feature = "ui"
-    note = "从 N66 rootfs 补 iPhone UI 资源"
-    items = tuple(SourceItem(source="ipsw:n66:" + path, dest=path, op="copy",
-                             depends_on_signing=False) for path in PATHS)
+    note = "从 UI donor 补 iPhone UI 资源（@3x 缺省、4.7 机型自动落 @2x）"
+
+    def apply(self, ctx, art=None):
+        donor = ctx.mount_rootfs(ctx.t.get("ui_donor", "n66"))
+        self.items, skipped = resolve_ui_items(donor, PATHS)
+        for path in skipped:
+            log.log(f"  跳过（donor 无此分辨率）: {os.path.basename(path)}")
+        super().apply(ctx, art)

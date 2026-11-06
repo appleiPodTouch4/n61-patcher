@@ -43,6 +43,43 @@ TARGET = {
                 "ipsw": "iPad_64bit_TouchID_13.7_17H35_Restore.ipsw"},
     },
 
+    # ===================== 从 IPSW 生成的派生输入（ipsw/cache/derived）=====================
+    # 由 tools/extract_ipsw.py 按本块执行；产物路径即 derived 里引用的相对路径。
+    "extract": {
+        "kernels": [
+            ["n56", "kernelcache.release.iphone7",
+             "extracted/n56ap_ios12/kernelcache.release.iphone7.decompressed"],
+            ["n66", "kernelcache.release.n66",
+             "extracted/n66ap_ios13/kernelcache.release.n66.decompressed"],
+        ],
+        "devicetrees": [
+            ["n56", "Firmware/all_flash/DeviceTree.n56ap.im4p",
+             "extracted/n56ap_ios12/DeviceTree.n56ap.jsonc"],
+            ["n66", "Firmware/all_flash/DeviceTree.n66ap.im4p",
+             "extracted/n66ap_ios13/DeviceTree.n66ap.jsonc"],
+        ],
+        "copies": [
+            ["j96", "kernelcache.release.ipad5", "extracted/j96ap_ios13/kernelcache.release.ipad5"],
+            ["j96", "Firmware/038-68261-036.dmg.trustcache",
+             "extracted/j96ap_ios13/038-68261-036.dmg.trustcache"],
+        ],
+        "wifi": {
+            "profile": "n56",
+            "rootfs_entry": "038-87140-057.dmg",
+            "srcdir": "usr/share/firmware/wifi/C-4345__s-B1",
+            "files": ["barbera.trx", "barbera.clmb", "barbera.txcb"],
+            "dest": "wifi/C-4345__s-B1",
+        },
+        "iboot": {
+            "profile": "n56",
+            "ibss": "Firmware/dfu/iBSS.n56.RELEASE.im4p",
+            "ibec": "Firmware/dfu/iBEC.n56.RELEASE.im4p",
+            "out_dir": "extracted/n56ap_ios12",
+            "ibss_name": "iBSS.n56.patched",
+            "ibec_name": "iBEC.n56.dec",
+        },
+    },
+
     # ===================== 工具链（仓库 tools/）=====================
     "tools": {
         "img4": "tools/img4lib/img4",

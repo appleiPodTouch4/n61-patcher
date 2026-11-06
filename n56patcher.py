@@ -298,7 +298,7 @@ class Flow:
         # ECID 比对（irecovery 大写十六进制，去掉前导 0 的形式可能不同，宽松包含判断）
         short = ecid.lower().replace("0x", "").lstrip("0")
         if short and short not in q.lower().replace("0x", ""):
-            log.warn(f"ECID 未匹配清单 {ecid}；请确认是目标 N56。")
+            log.warn(f"ECID 未匹配清单 {ecid}；请确认是目标 {model}。")
 
     def _ensure_iboot(self):
         """解密要求设备处于 DFU，进 ramdisk 后就无法补做，缺文件时必须在此之前完成。"""

@@ -27,9 +27,16 @@ def stage(name):
 
 
 class Die(SystemExit):
-    """受控失败：带非零退出码，GUI/CLI 都能捕获。"""
+    """受控失败：带非零退出码，GUI/CLI 都能捕获。
+
+    message 保留原始文案，便于 lint / 测试类工具区分"缺设备"和"真缺文件"。
+    """
+
+    def __init__(self, code=1, message=""):
+        super().__init__(code)
+        self.message = message
 
 
 def die(msg):
     print(_c(_R, "[ERROR]"), msg, file=sys.stderr, flush=True)
-    raise Die(1)
+    raise Die(1, msg)

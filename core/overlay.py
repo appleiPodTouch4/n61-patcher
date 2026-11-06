@@ -10,12 +10,41 @@ import plistlib
 _UNSET = object()
 
 
+def scale_variants(path):
+    """同一份资源的候选文件名：先用原样，再退化到 @2x。
+
+    5.5"（N66）donor 里是 @3x，4.7"（N71）donor 里对应的只有 @2x，
+    逐条按 donor 实际内容挑选，避免把 5.5 的三倍图塞进 4.7 的机型。
+    """
+    yield path
+    if "@3x" in path:
+        yield path.replace("@3x", "@2x")
+
+
+def resolve_ui_items(donor_root, paths):
+    """按 donor 里真实存在的文件展开 overlay 条目，返回 (items, skipped)。"""
+    items, skipped, seen = [], [], set()
+    for path in paths:
+        for candidate in scale_variants(path):
+            if os.path.exists(os.path.join(donor_root, candidate)):
+                if candidate in seen:      # @2x 与 @3x 条目可能落到同一个文件
+                    break
+                seen.add(candidate)
+                items.append(SourceItem(source="ipsw:ui:" + candidate, dest=candidate,
+                                        op="copy", depends_on_signing=False))
+                break
+        else:
+            skipped.append(path)
+    return items, skipped
+
+
 def parse_source(value):
     parts = value.split(":", 2)
     kind = parts[0]
     if kind == "device_s1" and len(parts) == 2:
         return kind, None, parts[1]
-    if kind == "ipsw" and len(parts) == 3 and parts[1] in ("n66", "j96"):
+    # ui 是别名：解析到目标清单的 ui_donor（iPhone 版 UI 资源的那份 rootfs）
+    if kind == "ipsw" and len(parts) == 3 and parts[1] in ("n66", "n71", "j96", "ui"):
         return kind, parts[1], parts[2]
     if kind == "derive" and len(parts) == 2:
         return kind, parts[1], None
@@ -71,11 +100,18 @@ class SourceOverlay(Patch):
             log.die(f"{item.op} 不能使用 device copy")
         return f'src="{source}"; dst="{dest}"; test -e "$src"; {operation}'
 
+    def resolve_profile(self, ctx, profile):
+        """ipsw:ui → 目标清单的 ui_donor（缺省 n66）。"""
+        if profile == "ui":
+            return ctx.t.get("ui_donor", "n66")
+        return profile
+
     def apply(self, ctx, art=None):
         ssh = ctx.ssh
         ssh.mount(ctx.t["mounts"]["system_b"], self.mount)
         for item in self.items:
             kind, profile, path = parse_source(item.source)
+            profile = self.resolve_profile(ctx, profile)
             dest = self.mount + "/" + item.dest
             log.log(f"  {item.op}: {item.source} → /{item.dest}")
             if item.op == "delete":
@@ -127,6 +163,10 @@ class SourceOverlay(Patch):
         before = bytes.fromhex(item.before)
         after = bytes.fromhex(item.after)
         current = ssh.read_range(dest, item.offset, len(before))
+        if current == after:
+            # 已经打过了（同一阶段中断后重跑）：幂等跳过，不要报 before 不匹配
+            log.log(f"  已应用，跳过: {item.dest}+0x{item.offset:x}")
+            return
         if current != before:
             log.die(f"{self.id} bytes-patch before 不匹配: {item.dest}+0x{item.offset:x}")
         ssh.write_range(dest, item.offset, after)

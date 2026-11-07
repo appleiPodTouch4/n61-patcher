@@ -60,12 +60,14 @@ ipsw/iPad_64bit_TouchID_13.7_17H35_Restore.ipsw    # J96：クリーンな KC �
 
 ### 3. エンドツーエンドフローの実行
 
-初回実行時や復元後は、デバイスを DFU にしてからエンドツーエンドフローを実行するか、Web UI で「端到端」（エンドツーエンド）を選択します：
+初回実行時や復元後は、デバイスを DFU にしてからフラッシュスクリプトを実行します：
 
 ```sh
-sudo python3 n56patcher.py all
-# ローカル Web UI。ディスクへ書き込むステージには sudo が必要です：
-sudo python3 gui.py
+sudo ./flash.sh all          # エンドツーエンド：インストール → ビルド → 起動
+# またはステップ実行（同じ作業ディレクトリを共有し、boot は build の成果物を直接再利用）：
+sudo ./flash.sh install
+./flash.sh build
+./flash.sh boot
 ```
 
 ```mermaid
@@ -75,9 +77,8 @@ flowchart LR
 
 > [!IMPORTANT]
 > - 復元すると古い IM4M とブートパッケージは無効になります。`build` は `state/IM4M.bin` の存在だけを確認し、古いかどうかは判定しないため、単独でビルドする前に `extract-im4m` を実行してください。
-> - Web UI の各ステージは個別の `build/` ディレクトリを使うため、ステージごとに実行すると `boot` は `build` の結果を再利用しません。新規インストールには「端到端」（エンドツーエンド）を使ってください。
+> - `flash.sh` はデフォルトで固定の `build/<target>-latest` 作業ディレクトリを使うため、ステップ実行でも `build`/`boot` が同じディレクトリの成果物を再利用します。`--fresh` でタイムスタンプ付きの新ディレクトリ、`--workdir` で明示指定に切り替えられます。
 > - `--dry-run` はフローを表示するだけで、デバイスへのアクセスや書き込みを行わず、ビルド成果物も生成しません。
-> - Web UI は简体中文、English、繁體中文、日本語に対応し、上部バーで切り替えられます。コンソールのログは CLI の出力で、中国語のままです。
 
 ### ローカルディレクトリ
 
@@ -111,9 +112,11 @@ flowchart LR
 <summary><b>ビルドと起動</b></summary>
 
 ```sh
-python3 n56patcher.py build --workdir build/current
-python3 n56patcher.py boot --workdir build/current
+./flash.sh build
+./flash.sh boot
 ```
+
+`flash.sh` は n56patcher.py のラッパーです。sudo とデバイスの DFU 状態を事前チェックし、書き込み前に確認を求め、固定の `build/<target>-latest` 作業ディレクトリを全ステージで使い回します。`python3 n56patcher.py build --workdir build/current` を直接呼び出すこともできます。
 
 ビルドチェーン：
 
@@ -149,7 +152,7 @@ python3 n56patcher.py build --features core,touch --workdir build/touch
 python3 n56patcher.py build --exclude kc.audio --workdir build/no-audio
 ```
 
-`--patches` は KC を正確に選択し、rootfs は引き続き `--features` の選択に従います。`--patches ''` はベース KC を生成します。GUI では必要な機能にチェックを入れるだけで、実行順序は自動で決まります。
+`--patches` は KC を正確に選択し、rootfs は引き続き `--features` の選択に従います。`--patches ''` はベース KC を生成します。依存関係は自動で補完され、実行順序も自動で決まります。
 
 </details>
 

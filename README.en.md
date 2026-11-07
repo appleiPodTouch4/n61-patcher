@@ -60,12 +60,14 @@ The first time a rootfs is needed, the flow extracts the DMG to `ipsw/cache/` an
 
 ### 3. Run the end-to-end flow
 
-On first run or after a restore, put the device in DFU, then run the end-to-end flow or choose “端到端” (end to end) in the web UI:
+On first run or after a restore, put the device in DFU, then run the flash script:
 
 ```sh
-sudo python3 n56patcher.py all
-# Local web UI; stages that write to disk need sudo:
-sudo python3 gui.py
+sudo ./flash.sh all          # end to end: install → build → boot
+# Or step by step (shared workdir; boot reuses the build output directly):
+sudo ./flash.sh install
+./flash.sh build
+./flash.sh boot
 ```
 
 ```mermaid
@@ -75,9 +77,8 @@ flowchart LR
 
 > [!IMPORTANT]
 > - A restore invalidates the old IM4M and old boot bundles. `build` only checks that `state/IM4M.bin` exists, not whether it is stale, so run `extract-im4m` before building on its own.
-> - Each web UI stage uses its own `build/` directory, so when you run stages separately `boot` does not reuse the output of `build`. Use “端到端” (end to end) for a fresh install.
+> - `flash.sh` uses a fixed `build/<target>-latest` workdir by default, so `build` and `boot` reuse the output of the same directory when run separately; pass `--fresh` for a new timestamped directory or `--workdir` to choose one explicitly.
 > - `--dry-run` only prints the flow. It does not access or write to the device and does not produce build output.
-> - The web UI supports 简体中文, English, 繁體中文 and 日本語, switchable in the top bar. Console logs come from the CLI and stay in Chinese.
 
 ### Local directories
 
@@ -111,9 +112,11 @@ All features are selected by default. `--features` selects patches across layers
 <summary><b>Build and boot</b></summary>
 
 ```sh
-python3 n56patcher.py build --workdir build/current
-python3 n56patcher.py boot --workdir build/current
+./flash.sh build
+./flash.sh boot
 ```
+
+`flash.sh` wraps n56patcher.py: it pre-checks sudo and the device's DFU state, asks for confirmation before writing to the device, and keeps a fixed `build/<target>-latest` workdir across stages. You can still call `python3 n56patcher.py build --workdir build/current` directly.
 
 Build chain:
 
@@ -149,7 +152,7 @@ python3 n56patcher.py build --features core,touch --workdir build/touch
 python3 n56patcher.py build --exclude kc.audio --workdir build/no-audio
 ```
 
-`--patches` selects KC patches exactly, while rootfs still follows `--features`. `--patches ''` produces the base KC. In the GUI, tick the features you need and the execution order is arranged automatically.
+`--patches` selects KC patches exactly, while rootfs still follows `--features`. `--patches ''` produces the base KC. Dependencies are resolved and the execution order is arranged automatically.
 
 </details>
 

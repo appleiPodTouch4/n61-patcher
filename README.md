@@ -60,12 +60,14 @@ ipsw/iPad_64bit_TouchID_13.7_17H35_Restore.ipsw    # J96：干净 KC 与 TrustCa
 
 ### 3. 运行端到端流程
 
-首次运行或刷机后，让设备进入 DFU，再运行端到端流程，或在网页界面选择“端到端”：
+首次运行或刷机后，让设备进入 DFU，再运行刷写脚本：
 
 ```sh
-sudo python3 n56patcher.py all
-# 本地网页界面，写盘阶段需要 sudo：
-sudo python3 gui.py
+sudo ./flash.sh all          # 端到端：安装 → 构建 → 启动
+# 或分步执行（共享同一工作目录，boot 直接复用 build 产物）：
+sudo ./flash.sh install
+./flash.sh build
+./flash.sh boot
 ```
 
 ```mermaid
@@ -75,9 +77,8 @@ flowchart LR
 
 > [!IMPORTANT]
 > - 刷机后旧 IM4M 和旧启动包都会失效。`build` 只检查 `state/IM4M.bin` 是否存在，不判断是否过期，单独构建前要先运行 `extract-im4m`。
-> - 网页界面的每个阶段使用独立的 `build/` 目录，分步执行时 `boot` 不会复用 `build` 的结果，全新安装请用“端到端”。
+> - `flash.sh` 默认使用固定的 `build/<target>-latest` 工作目录，分步执行时 `build`/`boot` 复用同一目录的产物；加 `--fresh` 改用带时间戳的新目录，或 `--workdir` 显式指定。
 > - `--dry-run` 只打印流程，不访问设备，不写设备，也不生成构建产物。
-> - 网页界面支持简体中文、English、繁體中文、日本語，在顶栏切换；控制台日志来自命令行，保持中文。
 
 ### 本地目录
 
@@ -111,9 +112,11 @@ flowchart LR
 <summary><b>构建与启动</b></summary>
 
 ```sh
-python3 n56patcher.py build --workdir build/current
-python3 n56patcher.py boot --workdir build/current
+./flash.sh build
+./flash.sh boot
 ```
+
+`flash.sh` 是 n56patcher.py 的封装：自动做 sudo 与设备 DFU 预检、写盘前确认，并用固定的 `build/<target>-latest` 工作目录贯穿各阶段。也可以直接调用 `python3 n56patcher.py build --workdir build/current`。
 
 构建链：
 
@@ -149,7 +152,7 @@ python3 n56patcher.py build --features core,touch --workdir build/touch
 python3 n56patcher.py build --exclude kc.audio --workdir build/no-audio
 ```
 
-`--patches` 精确选择 KC，rootfs 继续使用 `--features` 的选择。`--patches ''` 生成基础 KC。GUI 中直接勾选需要的功能，执行顺序自动安排。
+`--patches` 精确选择 KC，rootfs 继续使用 `--features` 的选择。`--patches ''` 生成基础 KC。依赖自动补齐，执行顺序自动安排。
 
 </details>
 

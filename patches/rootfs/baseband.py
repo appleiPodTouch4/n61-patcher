@@ -2,14 +2,12 @@ from core.overlay import SourceItem, SourceOverlay
 
 
 CACHE = "System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64"
+# iPhone 6（产品号 26）在 13.7 的产品表下界（27）之外，会走 b.hi 的默认分支。
+# 该分支对 iPhone 返回 0x2b（"不受支持"），CommCenter 据此跳过基带初始化。
+# 这里把默认分支的返回值改成 3：13.7 表内下标 0（产品号 27，iOS 13 支持的最老
+# iPhone）所用的硬件配置。产品表本身与其中所有机型的映射都不动。
 EDITS = (
-    (553028640,
-     "00" * 162,
-     "0102190219021902190219021902190219021902010219021902680203021902090200006a0000006a00130219021902190219020b0215023b023d02190219021902190219020d02fd011902190219026e001902190219021902fb0105023302ff01070235026e0019021902190219020f02190219021902190219023f026c006c00f50117023702190219021902190243023902f30111024502f101f7014102f901"),
-    (552611880, "086c0051", "08440051"),
-    (552611884, "1f190171", "1f410171"),
-    (552611896, "e90100b0", "290300b0"),
-    (552611900, "29593091", "29813091"),
+    (552614380, "60058052", "60008052"),   # 0x20F039EC: mov w0,#0x2b → mov w0,#3
     (1709334847,
      "76f6c93b3c903448176ae5d2fbecdb04596613e0441ffc8058f850a123db7d5a",
      "ae4a995247dc34ced4af27c2ce23eea91f386297c49a9cb8febf30744fc122e8"),
@@ -23,7 +21,7 @@ class BasebandCompatibility(SourceOverlay):
     id = "rootfs.baseband_compatibility"
     feature = "baseband"
     scope = "version"
-    note = "CommCenter N56 产品表、Mav10 固件和 iPhone Carrier Bundles"
+    note = "CommCenter 硬件配置默认分支、Mav10 固件和 iPhone Carrier Bundles"
     items = tuple(
         SourceItem(source="target:" + CACHE, dest=CACHE, op="bytes-patch",
                    depends_on_signing=True, offset=offset, before=before, after=after)

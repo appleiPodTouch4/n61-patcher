@@ -263,3 +263,236 @@ launchctl kickstart -k system/com.apple.mobileactivationd
 EFS 也没被读写。因此瓶颈更可能不在「HSIC 枚举时序」，而在 CommCenter 自身的基带初始化被跳过
 （前面日志里那句 `MGBasebandSupport.c:53 ... CommCenter error: 1:45 (Operation not supported)`），
 下一步优先查这条错误码的来源，而不是加重启延时任务。
+
+### 硬件配置定位（2026-11-07 20:05，静态比对 12.5.8 vs 13.7）
+
+`CommCenter error: 1:45` 的来源查清了：CommCenter 拿不到「硬件配置」这条最基本的输入。
+
+`libCommCenterBase.dylib` 里的 `GsmRadioPersonality::getHardwareConfiguration`
+（13.7 缓存文件偏移 `0x20F03024`）就是一个按产品号分发的大开关：
+
+```
+0x1a0f03024  bl   TelephonyRadiosGetProduct   ; 本机 iPhone7,2 → 26
+0x1a0f03028  sub  w8, w0, #0x1b               ; 下标 = 产品号 - 27
+0x1a0f0302c  cmp  w8, #0x46                   ; 表长 70 → 覆盖产品号 27..96
+0x1a0f03030  b.hi default                     ; 越界 → 0x2b（未知）
+0x1a0f03038  adrp x9, 0x1a0f40000
+0x1a0f0303c  add  x9, x9, #0xc16              ; u16 跳转表 @0x1a0f40c16
+```
+
+产品号 26 在 13.7 的表下界（27）之下——iPhone 6 不在 13.7 支持列表里，所以直接落
+默认分支拿到 `0x2b`。原补丁把下界改成 `0x11`、表基址换成另造的一张表，实测结果是
+**任何入参都返回 0x2b**（连通用的 iPhone 8,1 也被打成未知），等于把产品表整体废掉。
+
+判定「对」的取值靠 12.5.8 比对：挂载 12.5.8 的 IPSW 根分区，取出同名的
+`libCommCenterBase.dylib`，其等价开关是 `sub w8,w0,#0xf / cmp #0x4b`，
+跳转表 @`0x19b901c84`（int32 偏移），产品号 26 → 下标 11 → `0x19b901650: mov w20,#9`。
+即 **本机正常工作时的硬件配置是 9**。13.7 侧返回 9 的分支对应产品号 45，
+与 iPhone 6 同属 Mav10 硬件家族，语义吻合。
+
+所以补丁收敛成一条指令：`sub w8, w0, #0x1b` → `sub w8, w0, #8`，
+让产品号 26 落到下标 18 → 分支 `0x1a0f0393c: mov w0,#9`。跳转表与 adrp/add 全部还原成原版。
+
+同轮排除/确认的其它点：
+
+- 从任意 root 进程对 `AppleBasebandN61` 逐个 `IOServiceOpen(type=0..15)` **全部成功**，
+  说明内核侧 user client 没有拦人，瓶颈完全在用户态。`probe3 open` 可复现。
+- `MGGetStringAnswer("HWModel")` 返回 nil 是**键名别名问题**，不是值缺失：
+  用混淆键 `/YYygAofPDbhrwToVsXdeA` 能正常取到 `N61AP`，`h9jDsbgj7xIVeIQ8S/3XQ` → `iPhone7,2`。
+  MobileGestalt 缓存（`systemgroup.com.apple.mobilegestaltcache`）内容完整，无需重建。
+- `usr/standalone/firmware/Baseband/Mav10` 11 个文件齐备，13.7 的 `libTelephonyUtilDynamic`
+  与 `libBBUpdaterDynamic` 里都还留着 `Mav10` 字样，固件更新链路没有缺失。
+- 可用的在线观察通道：建好 `/var/wireless/Library/Logs/CoreTelephonyTraceScratch/`
+  后 CommCenter 会把 IMS/Bambi 的明文 trace 写进去（`/var/wireless/Library/Preferences/com.apple.ipTelephony.plist`
+  里 `ImsLoggingEnabled=1` 已开）。基带层日志仍未产出，说明基带初始化确实没走到。
+
+### 重启验证（2026-11-07 20:10）：补丁生效，CommCenter 走进基带初始化后空指针崩溃
+
+补丁首次带补丁重启，结果分层：
+
+1. **补丁确实生效**。参数量准了才发现 `getHardwareConfiguration` 的第 2 个入参才是 productType
+   （函数靠它找 `iPhone`/`iPad` token 才会进 switch）：
+
+   ```
+   cfg("N61AP",     "iPhone7,2") = 9    ← CommCenter 用的就是这个顺序，正确命中配置 9
+   cfg("iPhone7,2", "N61AP")     = 43   ← 顺序反了，token 不匹配，走默认分支
+   cfg("iPhone8,1", "N71AP")     = 43   ← 同上
+   ```
+
+   并用 `probe9` 在进程内核对：`bl` 目标 == `TelephonyRadiosGetProduct`（返回 26）、
+   开关处字节 == `082000511f190171…`、表 `[18]` = 0x23b → 目标 `mov w0,#9`。全链路自洽。
+
+2. **CommCenter 行为变了，但变成崩溃循环**。此前它安静地跳过基带（`ps` 里 pid 77 常驻），
+   现在从 19:57:50 开始每 10 s 崩一次，共 25 次后被 launchd 节流，当前 `CommCenter` 进程不存在：
+
+   ```
+   Exception Type:  EXC_BAD_ACCESS (SIGSEGV) / KERN_INVALID_ADDRESS at 0x0
+   Thread 11 Crashed:
+    0  CommCenter + 0x7A8DD8   ldr x8, [x19]        ; x19 = [x26, #0x1b8] == NULL
+   ```
+
+   即某个成员对象是空指针，随后取它的虚表。说明流程已经越过「拿硬件配置」这一关，
+   卡在「按配置构造 personality/服务对象」这一步。
+
+3. 静态链路的旁证：`getHardwareConfiguration` 在本镜像里只有一个调用点（`0x1a0f02ac8`），
+   它是个薄包装：`bl getHardwareConfiguration(x1,x2)` → 把返回值当第 2 个参数
+   尾调 `0x1a0f02af0`（`new(0x210)` + `0x1a0f03c84` 构造 → 读 `[obj+0x50]`）。
+   崩溃点在这条链的下游，要继续就得沿着 `x26` 找那个没被构造出来的对象。
+
+4. 缓存里**没有任何板号字符串**（`N61AP`/`N71AP`/`J96AP` 全为 0 命中），
+   产品表纯靠数字产品号；`Mav10` 只出现在 `libTelephonyUtilDynamic` / `libBBUpdaterDynamic` /
+   Powerlog / libswiftSpeech，`libCommCenterBase` 里没有——personality 不是按 Mav10 命名的。
+
+回滚方式：设备上 `/var/tmp/bb-prev.bin` 存着改动前的 24 字节（旧补丁状态），
+要退回「稳定但无蜂窝」就把它写回 `0x20F03028`。
+
+### 复核原项目的基带方案（2026-11-07 20:25）
+
+原项目自带基带修复：`patches/rootfs/baseband.py` 在 Initial commit 里就有，
+`targets/n56_ios13.py` 的 features 里挂着 `baseband`，`docs/conclusions.md` 也把基带
+写成「需要同时满足」的四条（产品表认 N56、Mav10 双路径、Carrier Bundles 取 N66、
+s3 role `0x80` 且改后缓存 cdhash 进 TC）。
+
+把原补丁那张 81 项手工表（@`0x1a0f68c20`）解出来对照，结论和之前的判断相反：
+
+```
+prod 17        → 0x1a0f03854
+prod 18 .. 26  → 0x1a0f038b4   ← 其中包含 N56(25) 和 N61(26)
+```
+
+`0x1a0f038b4` 就是 `b.hi` 的默认分支，它先比 `"iPad"`（`mov w19,#0x5069; movk #0x6461,lsl#16`），
+命中返回 `0x29`，否则返回 **`0x2b`(43)**。也就是说：
+
+- 原项目对 N56 **也是返回 0x2b**，而 conclusions 认为 N56 的基带是正常的。
+  所以 `0x2b` 不是「未知硬件配置」，而是 13.7 给 iPhone 这一档的通用配置。
+- 上一轮把 N61 从 `0x2b` 重定向到 `mov w0,#9`（12.5.8 的枚举值）是**跨版本误比**：
+  两个版本的硬件配置枚举语义不同，9 对应的 personality 在 13.7 上构造不出来，
+  CommCenter 才会 `EXC_BAD_ACCESS` @`+0x7A8DD8`（`[x26+0x1b8] == NULL`）。
+- 因此 N61 蜂窝不注网的原因**不在产品表**——N61 原本就走 `0x2b`，与 N56 同档。
+  要回到 `Carrier Bundles`、personality 资源、`s3` role/TC 这几条上找。
+
+待办：把设备上的 `sub w8,w0,#8` 还原（回滚点 `/var/tmp/bb-prev.bin`），
+让 N61 回到 `0x2b`，再排查真正的注网阻塞点。
+
+### 回滚验证与二轮排除（2026-11-07 20:40）
+
+按上一条结论把缓存里的 `sub w8,w0,#8` 还原成原版 `sub w8,w0,#0x1b` 后重启：
+
+- CommCenter 恢复常驻（pid 77/625，无新增崩溃报告，崩溃计数停在回滚前的 25 个）；
+- 基带状态回到原样：`AppleBasebandUserClient` 仍只有 locationd 那 1 个，EFS 不读；
+- 说明「改成 9」确实是崩溃的唯一来源，而不是新关卡。
+
+本轮同时排掉几项：
+
+- `disk0s1s3` 已挂在 `/private/var/wireless/baseband_data`（APFS nobrowse），s3 role 没问题；
+- `System/Library/Caches/com.apple.factorydata` 8 件齐全，`scrt-00007000-000470C830476826`、
+  `seal-00007000-000470C830476826` 的 CPID/ECID 与本机一致，签名材料不是缺口；
+- 13.7 的 carrier bundle 不按机型设限（`Info.plist` 只有 `CFBundleDeviceFamily=iPhone`），
+  缺 `overrides_N56_N61` 只影响 APN/VoLTE，不会阻止基带启动。
+
+一个可疑的新线索：13.7 把 personality 数据结构从 12.5.8 的 `PersonalityInfo` 重构成
+`PersonalitySpecific` / `PersonalitySpecificImpl`，但两版都保留
+`"Can't find personality info for: %s"` 与 `"Personality Shop is not ready"` 两个日志点。
+若 CommCenter 在 13.7 上取不到 N61 的 personality，就会走「跳过基带」而不是报错。
+
+注入观察这条路已试过并失败：用 `DYLD_INSERT_LIBRARIES` + `launchctl setenv` 起 CommCenter，
+钩子库的 constructor 一次都没执行——launchd 对 Apple 签名的 daemon 会剥掉 `DYLD_*`。
+要看到 CommCenter 内部的判定，只能走静态调用链或改 job 的 plist（后者同样可能被过滤）。
+
+### 产品号枚举与「默认分支」修正（2026-11-07 20:40）
+
+**13.7 的 rootfs 其实是 iPad（J96）的**：`usr/standalone/update/all_flash` 里全是
+`~ipad` 资源，并且 `usr/standalone/update/Mav10.Release.bbfw`（26,407,084 字节）是
+rootfs 原生自带的。也就是说 **13.7 用户态本身带 Mav10 支持**（iPad mini 4 / Air 2 那一档），
+之前「13.7 不支持 Mav10」的担心不成立。注意它和 12.5.8 的
+`Mav10.Release.bbfw`（26,380,490 字节）不是同一版本。
+
+**产品号是缓存变量，可以伪造**。`TelephonyRadiosGetProduct()` 的实现是：
+
+```
+adrp x8, page ; ldr x8, [x8, #0x878]   ; once 标志，-1 表示已算好
+cmn x8, #1    ; b.ne → 走一次计算
+adrp x8, page ; ldr w0, [x8, #0x86c]   ; 缓存的 product
+```
+
+在探针（`probe11`）里把 `page+0x878` 写成 -1、`page+0x86c` 写成目标产品号，就能让
+`getHardwareConfiguration` 按任意机型的编号分发。枚举结果（13.7，传 `("N61AP","iPhone7,2")`）：
+
+```
+prod   1..26  -> 43      ← 表外，全部走 b.hi 默认分支
+prod  27      -> 3       ← 表内下标 0
+prod  30/31/33-> 0/1/2
+prod  34,36   -> 4       prod 35,37 -> 5      prod 38 -> 6
+prod  43..46  -> 7,8,9,10
+prod  52,53   -> 11,12   prod 57,68 -> 13     prod 62..67 -> 15..20
+prod  73      -> 21      prod 79..84 -> 22,23,23,25,26,24
+prod  89..96  -> 30..37   prod 97+ -> 43
+```
+
+两点结论：
+
+1. **43 不是某个真实配置，而是「产品号不在表内」的兜底值**。iPhone 6 的产品号 26
+   正好落在表下界 27 之下，所以拿到 43，CommCenter 就不认这块基带。
+   `TelephonyRadiosGetProductName()` 对所有产品号都返回 NULL，产品号没有可读名字表。
+2. 原项目那张「把下界改到 0x11、另造 81 项表」的补丁之所以让所有机型都返回 43，
+   是因为它造的表把 18..26 全指向了默认分支——它没有真正解决任何机型。
+
+**这一版的补丁只改一条指令**：默认分支里 `mov w0, #0x2b` → `mov w0, #3`
+（`0x20F039EC` / 文件偏移 `552614380`，`60058052` → `60008052`）。
+产品表、表长、跳转基址全部保持原版，**表内所有机型的映射不受任何影响**，
+只有原本落默认分支的 iPhone 会从 43 变成 3。选 3 的理由：它是 13.7 表内下标 0
+（产品号 27，iOS 13 支持的最老 iPhone）的配置，是这台机器上「离 iPhone 6 最近」的一档。
+
+### 基带修复成功（2026-11-07 20:50，实测注网）
+
+默认分支那一行改动生效后，iPhone 6 + iOS 13.7 的蜂窝链路**完整打通**：
+
+```
+cfg("N61AP","iPhone7,2")        = 3        ← 原为 43
+CommCenter 持有的 user client    = 13 个    ← 原为 0（只有 locationd 那 1 个是别的进程）
+/private/var/wireless/baseband_data/bbfs/efs1.bin
+                                mtime = 20:45（本次开机）  ← 原来停在 12.5.8 那次开机
+pdp_ip0                          UP, RUNNING, 10.138.236.113
+scutil --nwi                     pdp_ip0: Reachable, Transient Connection, WWAN
+CTCarrier                        name=中国移动  mcc=460  mnc=02  iso=cn
+currentRadioAccessTechnology     CTRadioAccessTechnologyLTE
+```
+
+蜂窝数据通路也验证过（绑定 pdp_ip0 源地址做 TCP 直连，绕开 Wi-Fi 默认路由）：
+
+```
+probe13 10.138.236.113 223.5.5.5 80
+  bind 10.138.236.113 ok
+  connecting 223.5.5.5:80 ... connect OK
+  resp: HTTP/1.0 404 Not Found          ← 真实回包，数据链路通
+```
+
+`CommCenter` 常驻（pid 77），崩溃报告停在改动前的 20:01，本次开机以来**零崩溃**。
+
+#### 根因定论
+
+`getHardwareConfiguration` 的产品表覆盖产品号 27..96，iPhone 6 的产品号是 **26**，
+恰好落在表下界之下，命中 `b.hi` 默认分支。该分支先判 `"iPad"` token（是则返回 `0x29`），
+否则返回 `0x2b`。`0x2b` 不是「未知硬件配置」的占位值，而是「这台设备不属于本表任何一档」
+的兜底值——`TelephonyRadiosGetProductName()` 对所有产品号都返回 NULL，也没有名字表可反查。
+CommCenter 拿到兜底值后不报错，直接跳过基带初始化，于是表现为「进程常驻、EFS 从不读写、
+user client 只有 locationd 一个」。
+
+改成 `mov w0,#3`（表内下标 0，产品号 27 的配置）后，CommCenter 认为硬件配置合法，
+开始完整驱动基带：加载 Mav10 固件 → 读 EFS → 建 PDP → 注网。
+
+#### 为什么这个改法是对的
+
+- 只动默认分支的**一条**出口指令，表内 70 项映射、表长、跳转基址全部保持原版；
+- 早期那次「把下界改到 0x11 + 另造 81 项跳转表」的补丁之所以失败，是因为造出来的表把
+  18..26 全指向默认分支，等于对**所有**机型都返回兜底值，包括本来正常的 iPhone 8,1；
+- 中间试过的「重定向到 12.5.8 的配置值 9」是跨版本误比：12.5.8 与 13.7 的硬件配置
+  枚举语义不同，9 在 13.7 上对应的 personality 构造不出来，导致
+  `EXC_BAD_ACCESS @ CommCenter+0x7A8DD8`（`[x26+0x1b8] == NULL`）的崩溃循环。
+
+#### 遗留（不影响注网）
+
+- 13.7 的 carrier bundle 只有 `overrides_N66` / `overrides_N71`，缺 `overrides_N56_N61`。
+  这会影响 APN / VoLTE / 彩信等运营商参数，但**不影响基带启动与注网**（已实测）。
+  需要时从 12.5.8 的 `Carrier Bundles/iPhone/*/overrides_N56_N61.plist` 补过去，
+  改完 `killall CommCenter` 即可生效，不用重启。

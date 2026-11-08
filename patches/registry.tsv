@@ -1,0 +1,28 @@
+dt	base	dt.base	core	version			0	从本机 12.5.8 与 N66 13.7 设备树生成目标板 iOS13 设备树
+kc	transform	kc.audio	audio	device	kc.j96_clean	kc.pmu_d2186,kc.sn2400,kc.chestnut_kext,kc.mt_n56,kc.wifi,kc.vibration,kc.legacy_sep	0	CS42L67 音频驱动
+kc	transform	kc.chestnut_kext	chestnut	device	kc.j96_clean	kc.pmu_d2186,kc.sn2400	0	注入 AppleChestnutDisplayPMU（触摸供电）
+kc	base	kc.j96_clean	core	version			0	j96 内核 + KPloosh + K64P -b13 -n（从零重建基底）
+kc	transform	kc.legacy_sep	sep	version	kc.j96_clean	kc.pmu_d2186,kc.sn2400,kc.chestnut_kext,kc.mt_n56,kc.wifi,kc.vibration	0	旧 SEP 协议兼容
+kc	transform	kc.mt_n56	touch	device	kc.pmu_d2186,kc.chestnut_kext		0	触摸 personality J96 → 目标板（n56 / n61）
+kc	transform	kc.pmu_d2186	pmu	device	kc.j96_clean		0	D2207 PMU 适配 N56：电压表、GPIO 位定义、供电与串口 FIFO
+kc	transform	kc.sn2400	charging	device	kc.pmu_d2186		0	SN2400 充电驱动
+kc	transform	kc.vibration	vibration	device	kc.j96_clean	kc.pmu_d2186,kc.sn2400,kc.chestnut_kext,kc.mt_n56,kc.wifi	0	DRV2604 震动驱动
+kc	transform	kc.wifi	wifi	device	kc.j96_clean	kc.pmu_d2186,kc.sn2400,kc.chestnut_kext,kc.mt_n56	0	Wi-Fi B1 固件适配
+rootfs	overlay	rootfs.apticket	core	device	rootfs.base_stream		0	本机 APTicket → mobileactivationd collectSIK 路径
+rootfs	overlay	rootfs.b1_firmware	wifi	device	rootfs.base_stream		0	从本机 SystemA 复制完整 B1 Wi-Fi/蓝牙固件目录
+rootfs	overlay	rootfs.backupd_empty_snapshot	core	version	rootfs.base_stream		0	允许旧 MBS 接口返回无备份标识的空记录
+rootfs	stream	rootfs.base_stream	core	version			0	j96 13.7 rootfs 流式写入 s4（~25 分钟）
+rootfs	overlay	rootfs.baseband_compatibility	baseband	version	rootfs.base_stream		0	CommCenter 硬件配置默认分支、Mav10 固件和 iPhone Carrier Bundles
+rootfs	overlay	rootfs.bluetooth_userland	bluetooth	version	rootfs.base_stream,rootfs.b1_firmware,rootfs.fairplayd_h2		0	从 SystemA 生成 bluetoothd/BlueTool，并从 N66 补 NanoRegistry
+rootfs	overlay	rootfs.checkra1n_bootstrap	checkra1n	device	rootfs.base_stream		0	checkra1n Loader 服务、用户态工具与 USB SSH
+rootfs	overlay	rootfs.cydia	checkra1n	version	rootfs.base_stream,rootfs.checkra1n_bootstrap		0	core bootstrap 与 Cydia；首次开机完成 dpkg 配置
+rootfs	overlay	rootfs.factorydata	baseband	device	rootfs.base_stream		0	从本机 SystemA 补 factorydata
+rootfs	overlay	rootfs.fairplayd_h2	sep	version	rootfs.base_stream		0	从 N66 补 fairplayd.H2，并生成生产 mrm 缓存
+rootfs	finalize	rootfs.finish	core	version	rootfs.base_stream		0	var→DataB / fsck / SEP固件 / keybags 等收尾
+rootfs	overlay	rootfs.health	health	version	rootfs.base_stream,rootfs.fairplayd_h2,rootfs.phone_ui_apps		0	部署 repair-v7 最终库并应用 dyld2 缓存补丁
+rootfs	overlay	rootfs.installd_empty_containers	core	version	rootfs.base_stream		0	允许首个免费签名 App 在 Application 容器为空时安装
+rootfs	overlay	rootfs.n56_model_files	core	device	rootfs.base_stream		0	从本机 SystemA 补该板型的机型文件（N56 / N61）
+rootfs	overlay	rootfs.phone_ui_apps	ui	version	rootfs.base_stream,rootfs.fairplayd_h2		0	UI donor 17H35 的 Health/Phone/Wallet、iPhone 设置资源与壁纸
+rootfs	finalize	rootfs.set_roles	core	device	rootfs.finish		0	s4→System(0x1), s5→Data(0x40)
+rootfs	overlay	rootfs.settings_icons	ui	version	rootfs.base_stream,rootfs.ui_resources		0	从 UI donor 补设置图标（@3x 缺省、4.7 机型自动落 @2x）
+rootfs	overlay	rootfs.ui_resources	ui	version	rootfs.base_stream		0	从 UI donor 补 iPhone UI 资源（@3x 缺省、4.7 机型自动落 @2x）

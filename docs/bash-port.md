@@ -84,9 +84,14 @@ patches/dtdata/        目标板设备树资产（JSONC + 元数据）
 
 ```sh
 python3 tools/export_registry.py                 # 注册表 / overlay / 列表 / blobs
-python3 tools/export_kcdata.py --chain <黄金链>   # 内核改写表 + TrustCache 数据（带回放校验）
-python3 tools/export_dtdata.py                   # 设备树资产（带回放校验）
+
+tools/golden_kc_chain.sh --out /tmp/kc-golden --checkra1n   # 用 Python 版跑一遍黄金链
+python3 tools/export_kcdata.py --chain /tmp/kc-golden       # 内核改写表 + TrustCache 数据
+python3 tools/export_dtdata.py                              # 设备树资产（取 build/golden-py）
 ```
+
+两个导出工具都会**回放校验**：用同一套规则把每个阶段重放一遍，与 Python 产物逐字节比对，
+不一致直接报错，不会写进仓库。
 
 ## Phase C 的做法
 

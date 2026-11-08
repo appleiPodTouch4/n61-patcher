@@ -157,7 +157,8 @@ def export_one(chain, name, prev, cur, mode, intern):
                 plist_intern="1" if intern else "0")
 
     if mode == "blob":
-        (KCD / (name + ".plist.gz")).write_bytes(gzip.compress(xml_after, 9))
+        # mtime=0：同一份输入永远得到同一份字节，重导出不会在 git 里产生无谓 diff
+        (KCD / (name + ".plist.gz")).write_bytes(gzip.compress(xml_after, 9, mtime=0))
         meta["plist_gz"] = name + ".plist.gz"
         rebuilt = xml_after
     else:

@@ -116,6 +116,60 @@ def export_blobs():
           (len(rows), sum(len(e) for _, e in blobs)))
 
 
+def export_kc():
+    """内核补丁的静态数据：bash 版只移植算法，数据和地址表从这里导出。"""
+    out = write_dir("patches/kcdata")
+
+    # legacy_sep：VA + before/after（两条硬编码在 kc/legacy_sep.py 里）
+    import struct
+    legacy = [
+        ("fffffff0069123d8", "686a40f9088d42f9",
+         struct.pack('<II', 0x52800008, 0x14000069).hex()),
+        ("fffffff006a14d7c", "ff8300d1fd7b01a9",
+         struct.pack('<II', 0x52800000, 0xd65f03c0).hex()),
+    ]
+    profile = json.load(open(os.path.join(
+        REPO, "patches/impl/kc/legacy_data.json")))
+    for p in profile["patches"]:
+        legacy.append((p["address"][2:].lower(), p["before"], p["after"]))
+    with open(os.path.join(out, "legacy-sep.tsv"), "w") as f:
+        f.write("\n".join("\t".join(r) for r in legacy) + "\n")
+
+    # mt_n56：J96 personality → N56/N61，等长就地替换
+    from patches.impl.kc import mt_n56 as mt
+    rows = []
+    for board, edits in sorted(mt.PROFILES.items()):
+        rows.append((board, "anchor", mt.ANCHOR.hex(), ""))
+        rows.append((board, "end", b"</dict></dict>".hex(), ""))
+        for old, new in edits:
+            assert len(old) == len(new)
+            rows.append((board, "edit", old.hex(), new.hex()))
+    with open(os.path.join(out, "mt_n56.tsv"), "w") as f:
+        f.write("\n".join("\t".join(r) for r in rows) + "\n")
+
+    # kerninfo：BSD 初始化里发布 offsetcache 的载荷（常量 + 表项）
+    from patches.impl.kc import kerninfo as ki
+    rows = [(name, "%x" % value, kind) for name, value, kind in ki.ENTRIES]
+    with open(os.path.join(out, "kerninfo.tsv"), "w") as f:
+        f.write("# name\tvalue\tkind\n")
+        f.write("\n".join("\t".join(r) for r in rows) + "\n")
+        f.write("# const\tUNSLID_KERNEL_TASK=%x\n" % ki.UNSLID_KERNEL_TASK)
+        f.write("# const\tUNSLID_VM_KERNEL_SLIDE=%x\n" % ki.UNSLID_VM_KERNEL_SLIDE)
+        f.write("# const\tUNSLID_KERNEL_BASE=%x\n" % ki.UNSLID_KERNEL_BASE)
+        f.write("# const\tTASK_OFF_AI_ADDR=%x\n" % ki.TASK_OFF_AI_ADDR)
+        f.write("# const\tTASK_OFF_AI_SIZE=%x\n" % ki.TASK_OFF_AI_SIZE)
+        f.write("# const\tDATA_FOFF=%x\n" % ki.DATA_FOFF)
+        f.write("# const\tDATA_CAPACITY=%x\n" % ki.DATA_CAPACITY)
+        f.write("# const\tUNSLID_FLAGS_KADDR=%x\n" % ki.UNSLID_FLAGS_KADDR)
+        f.write("# const\tSHELLCODE_VMADDR=%x\n" % ki.SHELLCODE_VMADDR)
+        f.write("# const\tSHELLCODE_FOFF=%x\n" % ki.SHELLCODE_FOFF)
+        f.write("# const\tHOOK_VMADDR=%x\n" % ki.HOOK_VMADDR)
+        f.write("# const\tHOOK_FOFF=%x\n" % ki.HOOK_FOFF)
+
+    print("内核补丁数据: legacy-sep %d 项 / mt_n56 %d 项 / kerninfo %d 项"
+          % (len(legacy), len(rows), len(ki.ENTRIES)))
+
+
 def export():
     patches = patchmod.discover()
     rows = []
@@ -133,6 +187,7 @@ def export():
     print("导出 %d 个补丁 → patches/registry.tsv" % len(rows))
     export_overlays(patches)
     export_blobs()
+    export_kc()
 
 
 if __name__ == "__main__":

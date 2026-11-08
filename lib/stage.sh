@@ -176,8 +176,69 @@ stage_set_roles() {
 
 
 # ---------- build（Phase C）----------
+
+# iBSS：iOS12 已打过 n61 补丁的 iBSS，直接签 ibss
+build_ibss() {   # out
+    "$(tool img4)" -i "$(derived_path ibss_src)" -A -T ibss -M "$(im4m_path)" -o "$1" \
+        >/dev/null || die "iBSS 签名失败"
+}
+
+# iBEC：iBoot64Patcher 注入 boot-args → kairos 让 iBoot 认 rd= 根分区 → 签 ibec
+build_ibec() {   # out
+    local patched="$WK/iBEC.patched" kaired="$WK/iBEC.kairos"
+    "$(tool iBoot64Patcher)" "$(derived_path ibec_dec)" "$patched" \
+        -b "$T_BOOTARGS" -n >/dev/null 2>&1 || die "iBoot64Patcher 失败"
+    "$(tool kairos)" "$patched" "$kaired" -d "$T_ROOT_PART" >/dev/null 2>&1 ||
+        die "kairos 失败"
+    "$(tool img4)" -i "$kaired" -A -T ibec -M "$(im4m_path)" -o "$1" >/dev/null ||
+        die "iBEC 签名失败"
+}
+
+# KernelCache：基底 → 变换链 → mkcomplzss + watchtower → 签 rkrn（含 roundtrip 校验）
+build_kc() {   # out list
+    local out="$1" list="$2" id
+    kc_base
+    for id in $(awk -F'\t' '$1 == "kc" && $2 == "transform" { print $3 }' "$list"); do
+        log "  kc transform: $id"
+        kc_transform "$id" "$KC_ART" "$WK/$(kc_out_name "$id")"
+        KC_ART="$WK/$(kc_out_name "$id")"
+    done
+    kc_pack "$KC_ART" "$out"
+}
+
 stage_build() {
-    die "build 的 bash 版在 Phase C 实现（KC/DT 二进制变换尚未移植）。现阶段请用 Python 版构建：python3 n56patcher.py build --workdir ${WK}，产物 boot_*.img4 本脚本的 boot 阶段可直接使用。"
+    local list="$WK/patches-selected.txt" n
+    if dry; then log "dry-run：跳过构建。"; return 0; fi
+    select_patches "$OPT_FEATURES" "$OPT_PATCHES" "$OPT_EXCLUDE" \
+        "$T_BASE_DT" "$T_BASE_KC" >"$list"
+    log "构建启动组件 → $WK"
+
+    log "iBSS…"
+    build_ibss "$WK/boot_iBSS.img4"
+
+    log "iBEC（boot-args + kairos + 签名）…"
+    build_ibec "$WK/boot_iBEC.img4"
+
+    log "DeviceTree（dt patch 资产 + 签 rdtr）…"
+    build_dt "$WK/boot_DT.img4" "$list"
+
+    if [ "${T_FULL_TRUSTCACHE:-0}" = "1" ]; then
+        log "TrustCache（完整：原版 TC ∪ 本次新增二进制）…"
+        build_tc "$WK/boot_TC.img4"
+    else
+        log "TrustCache（原版静态 TC 直接签 rtsc）…"
+        "$(tool img4)" -i "$(derived_path trustcache)" -A -T rtsc -M "$(im4m_path)" \
+            -o "$WK/boot_TC.img4" >/dev/null || die "TrustCache 签名失败"
+    fi
+
+    log "KernelCache（基底 + 变换 + mkcomplzss + watchtower + 签 rkrn）…"
+    build_kc "$WK/boot_KC.img4" "$list"
+
+    log "已构建的组件："
+    for n in iBSS iBEC DT TC KC; do
+        printf '  boot_%s.img4  %s\n' "$n" \
+            "$([ -f "$WK/boot_$n.img4" ] && bin_len "$WK/boot_$n.img4" || echo 缺)"
+    done
 }
 
 # ---------- install ----------
@@ -198,5 +259,5 @@ stage_all() {
     stage_ramdisk
     stage_extract_im4m
     stage_install
-    die "build 阶段在 Phase C 实现（KC/DT 二进制变换）。install 已完成，可用 Python 版构建后再 ./n61.sh boot。"
+    stage_build
 }

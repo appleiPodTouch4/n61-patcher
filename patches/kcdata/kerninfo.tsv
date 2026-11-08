@@ -1,0 +1,20 @@
+# name	value	kind
+kernel_slide	0	slide
+kernel_base	fffffff007004000	address
+kernel_task	fffffff007091ab8	address
+kernel_task_offset_all_image_info_addr	3c8	constant
+kernel_task_offset_all_image_info_size	3d0	constant
+checkrain-flags	fffffff0076ea700	address
+jailbreak-capability	fffffff0076ea720	address
+# const	UNSLID_KERNEL_TASK=fffffff007091ab8
+# const	UNSLID_VM_KERNEL_SLIDE=fffffff007096268
+# const	UNSLID_KERNEL_BASE=fffffff007004000
+# const	TASK_OFF_AI_ADDR=3c8
+# const	TASK_OFF_AI_SIZE=3d0
+# const	DATA_FOFF=6e6700
+# const	DATA_CAPACITY=1900
+# const	UNSLID_FLAGS_KADDR=fffffff0076ea700
+# const	SHELLCODE_VMADDR=fffffff0076aa828
+# const	SHELLCODE_FOFF=6a6828
+# const	HOOK_VMADDR=fffffff007490e78
+# const	HOOK_FOFF=48ce78

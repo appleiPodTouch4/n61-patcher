@@ -64,6 +64,13 @@ T_FEATURES="pmu touch charging chestnut wifi vibration audio core ui bluetooth b
 T_PATCHES=""
 T_EXCLUDE=""
 T_FULL_TRUSTCACHE="1"
+# 与 N56 相同的二进制集合（同 build 的同一个二进制），装完首次启动前需复核
+T_PROFILE_CDHASHES="ea9b6b492e5f1fc2e1692a0ec93c65ab594c20c4 \
+e001b09ea59f73cc2804d1654059138ed571029a \
+f2a9b00a2e7fb8e0fefbccdf80bfc79a2aec2202 \
+2f4f85f4bdd0937195536da3d89927dfd01b142f \
+44b3dce9c846916db1419304401ceabe9b872031 \
+eff0e0b43afd6e72cfd81fda04325ce4282d9824"
 
 # ---- 工具（相对仓库；缺失时回退 ${LIOS_BIN}）----
 T_TOOL_img4="tools/img4lib/img4"

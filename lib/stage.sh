@@ -87,14 +87,97 @@ stage_rootfs() {
     log "$(rsh 'ls -ln /mnt6/sbin/launchd /mnt6/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64')"
 }
 
-# ---------- patch-rootfs（Phase B）----------
-stage_patch_rootfs() {
-    die "patch-rootfs 的 bash 版在 Phase B 实现（overlay + finish + 改 role）。当前请用 Python 版：sudo python3 n56patcher.py patch-rootfs --workdir $WK"
+# ---------- patch-rootfs ----------
+# 与 Python 版一致：只跑 rootfs 层里 role ∈ {overlay, finalize} 的补丁，
+# 顺序取自注册表（已做 role 排序 + 同层依赖拓扑）。
+patch_apply() {   # id
+    case "$1" in
+        rootfs.finish)    stage_finish ;;
+        rootfs.set_roles) stage_set_roles ;;
+        *)                ov_apply "$1" ;;
+    esac
 }
+
+stage_patch_rootfs() {
+    local layer role id feat note ran=0 list="$WK/patches-selected.txt"
+    if dry; then log "dry-run：跳过 rootfs 补丁。"; return 0; fi
+    ssh_ensure
+    select_patches "$OPT_FEATURES" "$OPT_PATCHES" "$OPT_EXCLUDE" \
+        "$T_BASE_DT" "$T_BASE_KC" >"$list"
+    mount_vol "$T_MNT_SYSTEM_B" "$OV_MNT"
+    while IFS="$(printf '\t')" read -r layer role id feat; do
+        [ "$layer" = "rootfs" ] || continue
+        case "$role" in overlay|finalize) ;; *) continue ;; esac
+        note="$(patch_note "$id")"
+        log "→ $id  (${note})"
+        patch_apply "$id"
+        ran=$(( ran + 1 ))
+    done <"$list"
+    sync_dev
+    donor_umount_all
+    ok "rootfs 补丁完成，共 ${ran} 个。"
+}
+
+# ---------- finish（rootfs.finish）----------
+stage_finish() {
+    local apfs14 encrypted=0 keybags
+    apfs14="$(donor_dir)/$T_DONOR_APFS14"
+    [ -d "$apfs14" ] || die "缺少 iOS14 fsck 资产: $apfs14"
+    [ "$T_DATA_PROTECTION" = "encrypted" ] && encrypted=1
+
+    mount_vol "$T_MNT_SYSTEM_B" /mnt6
+    mount_vol "$T_MNT_SYSTEM12" /mnt1 ro
+    if [ "$encrypted" -eq 1 ]; then
+        ensure_systembag
+    else
+        mount_vol "$T_MNT_DATA_B" /mnt7
+    fi
+
+    log "private/var → DataB…"
+    rsh "/bin/cp -a /mnt6/private/var/. /mnt7/"
+
+    log "xarts / preboot 目录…"
+    rsh "mkdir -p /mnt6/private/xarts /mnt6/private/preboot && chmod 755 /mnt6/private/xarts /mnt6/private/preboot"
+
+    log "换 iOS14 fsck + apfs.fs（原文件改名 *Backup）…"
+    rsh "cd /mnt6 && { [ -e sbin/fsckBackup ] || mv sbin/fsck sbin/fsckBackup; } &&
+        { [ -e System/Library/Filesystems/apfs.fsBackup ] ||
+          mv System/Library/Filesystems/apfs.fs System/Library/Filesystems/apfs.fsBackup; }"
+    COPYFILE_DISABLE=1 /usr/bin/tar --uid 0 --gid 0 --no-xattrs -cf - \
+        -C "$apfs14" ./sbin/fsck ./System/Library/Filesystems/apfs.fs |
+        ssh_run "/usr/bin/tar --numeric-owner -xpf - -C /mnt6 &&
+            chmod 755 /mnt6/System/Library/Filesystems/apfs.fs" ||
+        die "fsck/apfs.fs 替换失败"
+
+    log "SEP 固件（来自 iOS12 s1）…"
+    rsh "/bin/cp -a /mnt1/usr/standalone/firmware/sep-firmware.img4 /mnt6/usr/standalone/firmware/"
+
+    if [ "$encrypted" -eq 1 ]; then
+        log "保留本次为加密 DataB 创建的 systembag…"
+        rsh "test -s /mnt7/keybags/systembag.kb"
+    else
+        keybags="$(state_dir)/keybags.tar"
+        [ -f "$keybags" ] || die "缺少 ${keybags}（--data-protection none 时需自备越狱 iOS12 的 keybags）"
+        log "keybags → DataB…"
+        ssh_run "/usr/bin/tar --numeric-owner -xpf - -C /mnt7" <"$keybags" ||
+            die "keybags 写入失败"
+    fi
+
+    log "$(rsh "ls -ln /mnt6/sbin/fsck /mnt6/usr/standalone/firmware/sep-firmware.img4 /mnt7/keybags/systembag.kb")"
+    sync_dev
+    umount_vols /mnt1 /mnt7 /mnt6
+    log "finish 完成，卷已卸载。"
+}
+
+# ---------- set_roles（rootfs.set_roles，必须最后一步、卷未挂载）----------
+stage_set_roles() {
+    apfs_set_roles "$T_ROLES" 1
+}
+
 
 # ---------- build（Phase C）----------
 stage_build() {
-    die "build 的 bash 版在 Phase C 实现（KC/DT 二进制变换尚未移植）。现阶段请用 Python 版构建：python3 n56patcher.py build --workdir $WK，产物 boot_*.img4 本脚本的 boot 阶段可直接使用。"
+    die "build 的 bash 版在 Phase C 实现（KC/DT 二进制变换尚未移植）。现阶段请用 Python 版构建：python3 n56patcher.py build --workdir ${WK}，产物 boot_*.img4 本脚本的 boot 阶段可直接使用。"
 }
 
 # ---------- install ----------

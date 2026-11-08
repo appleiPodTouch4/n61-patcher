@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# 工具解析：仓库 tools/ → $LIOS_BIN（Legacy-iOS-Kit bin/macos）→ PATH。
+# 工具解析：仓库 tools/ → ${LIOS_BIN}（Legacy-iOS-Kit bin/macos）→ PATH。
 
 tool() {
     local name="$1" var val cand

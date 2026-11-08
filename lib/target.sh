@@ -49,9 +49,27 @@ im4m_path() {
     printf '%s\n' "$p"
 }
 
+# 某 profile（n61/n66/n71/j96）对应的系统 build 号
+target_build() {
+    case "$1" in
+        n61) printf '%s\n' "$T_BUILD_N61" ;;
+        n66) printf '%s\n' "$T_BUILD_N66" ;;
+        n71) printf '%s\n' "$T_BUILD_N71" ;;
+        j96) printf '%s\n' "$T_BUILD_J96" ;;
+        *)   printf '\n' ;;
+    esac
+}
+
 # rootfs DMG：优先 ipsw/cache/，否则从 IPSW 提取
 rootfs_dmg() {
-    local kind="$1" entry name ipsw cache
+    local kind="$1" entry name ipsw cache override
+    # 目录外的 DMG 可直接指定：N56_ROOTFS_N66=/path/to/x.dmg ./n61.sh …
+    eval "override=\${N56_ROOTFS_$(printf '%s' "$kind" | tr 'a-z' 'A-Z'):-}"
+    if [ -n "$override" ]; then
+        [ -f "$override" ] || die "N56_ROOTFS_ 指定的 DMG 不存在: $override"
+        printf '%s\n' "$override"
+        return 0
+    fi
     case "$kind" in
         n61) entry="$T_ROOTFS_ENTRY_N61"; ipsw="$T_IPSW_N61" ;;
         n66) entry="$T_ROOTFS_ENTRY_N66"; ipsw="$T_IPSW_N66" ;;
@@ -84,3 +102,9 @@ setup_workdir() {
 }
 
 wk() { printf '%s\n' "$WK/$1"; }
+
+# state/（IM4M、keybags 等跨阶段状态）
+state_dir() {
+    mkdir -p "$REPO/state"
+    printf '%s\n' "$REPO/state"
+}

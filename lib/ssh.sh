@@ -101,19 +101,59 @@ ensure_sep() {
     fi
 }
 
-# 本地文件/目录 → 设备（流式 tar，不生成中间包）
+# 本地文件/目录 → 设备（流式 tar，不生成中间包；目录可指定属主）
 deploy_path() {
-    local src="$1" dest="$2" rc_producer rc_consumer
+    local src="$1" dest="$2" uid="${3:-}" gid="${4:-}" rc_producer rc_consumer
     src="$(cd "$(dirname "$src")" && pwd)/$(basename "$src")"
     if [ -d "$src" ]; then
         rsh "mkdir -p \"$dest\""
-        COPYFILE_DISABLE=1 /usr/bin/tar --no-xattrs -cpf - -C "$src" . \
+        COPYFILE_DISABLE=1 /usr/bin/tar --no-xattrs ${uid:+--uid "$uid"} ${gid:+--gid "$gid"} \
+            -cpf - -C "$src" . \
             | ssh_run "/usr/bin/tar --numeric-owner -xpf - -C \"$dest\""
         ssh_run "test -d \"$dest\"" || die "部署目录失败: $dest"
     else
-        rsh "mkdir -p \"$(dirname "$dest")\""
-        COPYFILE_DISABLE=1 /usr/bin/tar --no-xattrs -cpf - -C "$(dirname "$src")" "$(basename "$src")" \
-            | ssh_run "/usr/bin/tar --numeric-owner -xpf - -C \"$(dirname "$dest")\""
-        ssh_run "test -e \"$dest\"" || die "部署文件失败: $dest"
+        deploy_file "$src" "$dest"
     fi
 }
+
+# 本地文件 → 设备指定路径（目标文件名可与源不同，如 mrm.plist.sig）
+deploy_file() {
+    local src="$1" dest="$2"
+    rsh "mkdir -p \"$(dirname "$dest")\""
+    ssh_run "cat > \"$dest\"" <"$src" || die "部署文件失败: $src → $dest"
+    ssh_run "test -s \"$dest\"" || die "部署文件后为空: $dest"
+}
+
+# 按相对路径清单从本地 root 流式部署（tar -T，避免 argv 过长）
+deploy_relative_paths() {   # root dest listfile
+    local root="$1" dest="$2" list="$3"
+    [ -s "$list" ] || { log "  （清单为空，跳过）"; return 0; }
+    root="$(cd "$root" && pwd)"
+    rsh "mkdir -p \"$dest\""
+    COPYFILE_DISABLE=1 /usr/bin/tar --no-xattrs -cpf - -C "$root" -T "$list" \
+        | ssh_run "/usr/bin/tar --numeric-owner -xpf - -C \"$dest\"" ||
+        die "文件集流式写入失败: $(wc -l <"$list" | tr -d ' ') 项 → $dest"
+}
+
+# 设备 → 本地
+pull_file() {   # remote local
+    mkdir -p "$(dirname "$2")"
+    ssh_run "cat \"$1\"" >"$2" || die "读取设备文件失败: $1"
+    [ -s "$2" ] || die "读取设备文件为空: $1"
+}
+
+# 设备文件区间读成十六进制串（od 在本地做，避免二进制过 shell 变量丢 NUL）
+read_hex() {   # remote offset len
+    ssh_run "dd if=\"$1\" bs=1 skip=$2 count=$3 2>/dev/null" | od -An -v -tx1 | tr -d ' \n'
+}
+
+# 十六进制串写回设备文件区间（printf %b 解释 \xNN，二进制安全）
+write_hex() {   # remote offset hex
+    local esc="" i=0 hex="$3"
+    while [ "$i" -lt "${#hex}" ]; do
+        esc="$esc\\x${hex:$i:2}"
+        i=$(( i + 2 ))
+    done
+    printf '%b' "$esc" | ssh_run "dd of=\"$1\" bs=1 seek=$2 conv=notrunc 2>/dev/null"
+}
+

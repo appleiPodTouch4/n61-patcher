@@ -65,7 +65,7 @@ T_PATCHES=""
 T_EXCLUDE=""
 T_FULL_TRUSTCACHE="1"
 
-# ---- 工具（相对仓库；缺失时回退 $LIOS_BIN）----
+# ---- 工具（相对仓库；缺失时回退 ${LIOS_BIN}）----
 T_TOOL_img4="tools/img4lib/img4"
 T_TOOL_devicetree_repack="tools/devicetree-parse/devicetree-repack"
 T_TOOL_iBoot64Patcher="tools/SSHRD_Script/Darwin/iBoot64Patcher"
@@ -76,3 +76,7 @@ T_TOOL_iproxy="tools/SSHRD_Script/Darwin/iproxy"
 T_TOOL_sshpass="tools/SSHRD_Script/Darwin/sshpass"
 T_TOOL_Kernel64Patcher="tools/dualra1n/binaries/Darwin/Kernel64Patcher"
 T_TOOL_kairos="tools/dualra1n/binaries/Darwin/kairos"
+
+# ---- 本机 SystemA 的 B1 无线固件（N61 = tempranillo，N56 = barbera）----
+T_WIFI_SRCDIR="usr/share/firmware/wifi/C-4345__s-B1"
+T_WIFI_FILES="tempranillo.trx tempranillo.clmb tempranillo.txcb"

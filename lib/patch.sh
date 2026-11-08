@@ -95,3 +95,8 @@ patches_of() {   # layer role
     select_patches "$OPT_FEATURES" "$OPT_PATCHES" "$OPT_EXCLUDE" "$T_BASE_DT" "$T_BASE_KC" |
         awk -F'\t' -v l="$1" -v r="$2" '$1 == l && $2 == r { print $3 }'
 }
+
+# 补丁说明（registry.tsv 第 9 列）
+patch_note() {
+    awk -F'\t' -v id="$1" '$3 == id { print $9; exit }' "$REGISTRY"
+}

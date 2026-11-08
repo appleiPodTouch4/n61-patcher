@@ -79,6 +79,11 @@ done
 . "$REPO/lib/ssh.sh"
 . "$REPO/lib/apfs.sh"
 . "$REPO/lib/patch.sh"
+. "$REPO/lib/mounts.sh"
+. "$REPO/lib/overlay.sh"
+. "$REPO/lib/mrm.sh"
+. "$REPO/lib/systembag.sh"
+. "$REPO/lib/checkra1n.sh"
 . "$REPO/lib/device.sh"
 . "$REPO/lib/stage.sh"
 
@@ -102,7 +107,7 @@ export LIOS_BIN
 
 setup_workdir
 
-trap 'apfs_cleanup' EXIT
+trap 'donor_umount_all; apfs_cleanup' EXIT
 
 case "$STAGE" in
     list)         stage_list ;;

@@ -6,11 +6,13 @@
 #   extract-im4m   刷机后重提本机 IM4M（读 NOR）→ state/IM4M.bin   [需 ramdisk]
 #   volumes        建 s4 SystemB / s5 DataB（role 0）              [需 ramdisk]
 #   rootfs         把 iOS13.7 rootfs 流式写入 s4（~25 分钟）        [需 ramdisk + sudo]
-#   patch-rootfs   overlay + 收尾 + 改 role                        [Phase B，暂用 Python]
+#   patch-rootfs   overlay + 收尾 + 改 role
+#   build          构建五个启动组件 boot_*.img4（iBSS/iBEC/DT/TC/KC）
 #   install        = volumes + rootfs + patch-rootfs
 #   boot           经 DFU 发送已构建的启动链（iBSS/iBEC/DT/TC/KC）
 #   status         ramdisk 下列出各卷 role / 加密状态 / 已用空间
 #   list           列出当前目标选挂的补丁
+#   all            ramdisk → extract-im4m → install → build
 #
 # 选项：
 #   --target NAME            目标清单（默认 n61-ios13）

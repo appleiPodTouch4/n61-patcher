@@ -14,11 +14,12 @@
 | `volumes` 建卷（含 -P 加密 + SEP） | ✅ | newfs_apfs 经 ramdisk |
 | `rootfs` 流式写入 s4 | ✅ | hdiutil -owners + tar 流 |
 | 改 role（Fletcher-64） | ✅ | 与 Python 逐位一致，写前备份、写后读回 |
-| `patch-rootfs`（overlay + finish） | ⬜ Phase B | 13 个 overlay 清单已导出到 `patches/overlays/` |
+| `patch-rootfs`（overlay + finish + set_roles） | ✅ Phase B | 15 个 overlay 全部接通 |
 | `build`（iBSS/iBEC/DT/TC/KC） | ⬜ Phase C | KC/DT 的二进制变换尚未移植 |
-| `install` / `all` | ⚠ | 依赖上两行 |
+| `install` | ✅ | volumes + rootfs + patch-rootfs |
+| `all` | ⚠ | 卡在 `build` |
 
-Phase B/C 完成前，用 Python 版跑这两段，产物与 bash 版共用工作目录即可衔接。
+`build` 完成前，用 Python 版跑这一段，产物落在同一个工作目录，`./n61.sh boot` 可直接用。
 
 ## 用法
 
@@ -27,6 +28,7 @@ Phase B/C 完成前，用 Python 版跑这两段，产物与 bash 版共用工�
 ./n61.sh ramdisk                  # DFU → 12.5.8 SSH ramdisk
 sudo ./n61.sh volumes             # 建 s4/s5（加密需要 SEP）
 sudo ./n61.sh rootfs              # 写入 13.7 rootfs（~25 分钟）
+sudo ./n61.sh patch-rootfs        # overlay + 收尾 + 改 role
 ./n61.sh status                   # 卷 role / 加密 / 已用
 ./n61.sh boot                     # 发送已构建的启动链
 ```
@@ -43,17 +45,25 @@ lib/log.sh             输出
 lib/target.sh          目标清单加载、IPSW/派生输入/工作目录
 lib/tools.sh           工具解析：仓库 tools/ → $LIOS_BIN → PATH
 lib/ssh.sh             iproxy + sshpass + 挂卷 + tar 落盘
+lib/mounts.sh          donor rootfs 只读挂载（owners 模式 + build 校验）
 lib/apfs.sh            原始块读写 / Fletcher-64 / 卷表 / 建卷 / 改 role
+lib/overlay.sh         overlay 引擎（copy/delete/bytes-patch + UI/机型清单）
+lib/mrm.sh             mrm.plist 重建 + 重签
+lib/systembag.sh       systembag 注入
+lib/checkra1n.sh       checkra1n 引导 + cydia 安装
 lib/patch.sh           补丁选择（awk，等价 core/patch.py）
 lib/device.sh          irecovery 链：DFU / pwn / 启动链发送
 lib/stage.sh           各阶段实现
 targets/n61_ios13.sh   目标清单（纯 shell 变量）
 patches/registry.tsv   补丁注册表（Python 版导出的静态数据）
 patches/overlays/*.conf overlay 清单（同上，Phase B 消费）
+patches/lists/*.paths  UI 资源固定路径表（按 donor 实况展开 @3x/@2x）
+patches/blobs.tsv + patches/blobs/*.conf  二进制补丁（偏移 + before/after）
 ```
 
-`patches/registry.tsv` 与 `patches/overlays/*.conf` 是**静态数据**，运行时不依赖
-Python；改动 Python 补丁定义后需重新导出（见 `tools/export_registry.py`）。
+`patches/registry.tsv`、`patches/overlays/*.conf`、`patches/lists/*.paths`、
+`patches/blobs.tsv` 是**静态数据**，运行时不依赖 Python；改动 Python 补丁定义后需重新导出
+（`python3 tools/export_registry.py`）。
 
 ## 已验证
 
@@ -63,6 +73,11 @@ Python；改动 Python 补丁定义后需重新导出（见 `tools/export_regist
 - 卷枚举：对 hdiutil 造的裸 APFS 镜像，bash 与 Python 解析到同一卷、同一 block、同一 role。
 - 改 role：在镜像上把 role 0→1，写后读回一致，Python 复核 `role=0x1` 且校验和有效。
 - 无设备时 `status` 立即报错退出（不空等 SSH 超时）。
+- phone_ui 四份清单（设置资源 / 设置二进制 / 启动 UI / App 图标）：合成 fixture 上
+  与 Python 版逐行一致，覆盖 Mach-O 判定、`_CodeSignature` 剔除、符号链接剔除、
+  目标缺失、同内容跳过、`@3x`/`@2x` 退化与图标命名规则、j96 缺失 App 等边界。
+- mrm.plist：与 Python 版语义相等（顶层键、LaunchDaemons、AppExtensions 全部一致）。
+- installd / backupd 补丁产物 sha256 与 Python 版相同。
 
 ## 约束
 

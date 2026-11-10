@@ -26,14 +26,14 @@ dt_build_bin() {
     local board meta jsonc in12 in66
     board="$(dt_board)"
     meta="$DTD/$board.meta"
-    [ -f "$meta" ] || die "缺少 $meta（先跑 python3 tools/export_dtdata.py）"
+    [ -f "$meta" ] || die "缺少 ${meta}（先跑 python3 tools/export_dtdata.py）"
     jsonc="$DTD/$(dt_meta jsonc)"
     DT_BIN="$WK/DeviceTree.${board}_native.bin"
     [ -f "$jsonc" ] || die "缺少设备树资产: $jsonc"
 
     in12="$REPO/ipsw/cache/derived/extracted/${board}_ios12/DeviceTree.${board}.jsonc"
     in66="$REPO/ipsw/cache/derived/extracted/n66ap_ios13/DeviceTree.n66ap.jsonc"
-    [ -f "$in12" ] || die "缺少本机 12.5.8 设备树: $in12（先跑 Python 版派生步骤）"
+    [ -f "$in12" ] || die "缺少本机 12.5.8 设备树: ${in12}（先跑 Python 版派生步骤）"
     [ -f "$in66" ] || die "缺少 N66 13.7 设备树: $in66"
     [ "$(kc_sha "$in12")" = "$(dt_meta in_dt12_sha)" ] ||
         die "设备树资产过期：本机 12.5.8 设备树与导出时不同（重跑 tools/export_dtdata.py）"
@@ -47,10 +47,18 @@ dt_build_bin() {
         die "设备树打包结果与导出资产不一致（devicetree-repack 版本不符？）"
 }
 
-build_dt() {   # out
-    local out="$1"
+build_dt() {   # out [list]
+    local out="$1" list="${2:-}" transform im4m
+    if [ -n "$list" ] && [ -f "$list" ]; then
+        transform="$(awk -F'\t' '$1 == "dt" && $2 == "transform" { print $3; exit }' "$list")"
+        [ -z "$transform" ] ||
+            die "bash 版未实现 dt transform: ${transform}（DT 只支持版本锁定资产；请调整 --features/--patches，或用 Python 版构建）"
+        awk -F'\t' '$1 == "dt" && $2 == "base"' "$list" | grep -q . ||
+            die "未选中 dt base（清单 bases['dt']）"
+    fi
     dt_build_bin
-    "$(tool img4)" -i "$DT_BIN" -A -T rdtr -M "$(im4m_path)" -o "$out" >/dev/null ||
+    im4m="$(im4m_path)" || die "缺少 IM4M（先跑 ./n61.sh extract-im4m）"
+    "$(tool img4)" -i "$DT_BIN" -A -T rdtr -M "$im4m" -o "$out" >/dev/null ||
         die "DeviceTree 签名失败"
     log "  DeviceTree: $(bin_len "$out") 字节"
 }

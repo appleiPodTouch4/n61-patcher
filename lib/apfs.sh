@@ -28,16 +28,28 @@ apfs_cleanup() {
 }
 
 apfs_read_block() {
-    local n="$1" f
+    local n="$1" f try=0 sz
     f="$(apfs_dir)/$n.bin"
     if [ -f "$f" ]; then
         printf '%s\n' "$f"
         return 0
     fi
-    ssh_run "dd if=$APFS_RDEV bs=$APFS_BS skip=$n count=1 2>/dev/null" >"$f" ||
-        die "块 $n 读取失败"
-    [ "$(wc -c <"$f" | tr -d ' ')" -eq "$APFS_BS" ] || die "块 $n 读取长度异常"
-    printf '%s\n' "$f"
+    # 实机遇到过偶发 SSH 认证失败（Permission denied）导致单块读失败；
+    # 只读的块读取重试 3 次，最终失败就中止，绝不带着空块继续解析。
+    while [ "$try" -lt 3 ]; do
+        try=$(( try + 1 ))
+        rm -f "$f"
+        if ssh_run "dd if=$APFS_RDEV bs=$APFS_BS skip=$n count=1 2>/dev/null" >"$f" 2>/dev/null; then
+            sz="$(wc -c <"$f" | tr -d ' ')"
+            if [ "$sz" -eq "$APFS_BS" ]; then
+                printf '%s\n' "$f"
+                return 0
+            fi
+        fi
+        [ "$try" -lt 3 ] && { warn "块 $n 读取失败，重试（${try}/3）"; sleep 1; }
+    done
+    rm -f "$f"
+    die "块 $n 读取失败（已重试 3 次；检查 ramdisk SSH 是否稳定）"
 }
 
 apfs_read_block_fresh() {
@@ -107,7 +119,7 @@ EOF
 # ---------- 容器/卷遍历 ----------
 apfs_latest_nxsb() {
     local blk0 xp_blocks xp_base i b best best_xid xid
-    blk0="$(apfs_read_block 0)"
+    blk0="$(apfs_read_block 0)" || die "读取块 0 失败"
     magic_is "$blk0" 32 NXSB || die "块 0 不是 APFS 容器超级块"
     xp_blocks=$(( $(rd_u32 "$blk0" 0x68) & 0x7fffffff ))
     xp_base="$(rd_u64 "$blk0" 0x70)"
@@ -115,7 +127,7 @@ apfs_latest_nxsb() {
     best_xid="$(rd_u64 "$blk0" 16)"
     i=0
     while [ "$i" -lt "$xp_blocks" ]; do
-        b="$(apfs_read_block $(( xp_base + i )))"
+        b="$(apfs_read_block $(( xp_base + i )))" || die "checkpoint 块 $(( xp_base + i )) 读取失败"
         if magic_is "$b" 32 NXSB && apfs_checksum_ok "$b"; then
             xid="$(rd_u64 "$b" 16)"
             if [ "$xid" -gt "$best_xid" ]; then
@@ -155,9 +167,9 @@ apfs_volumes() {
     APFS_V_BLOCK=()
     local nx omap tree max_fs i oid idx=0 paddr blk
     local flags level nkeys toff tlen toc keystart valend
-    nx="$(apfs_latest_nxsb)"
-    omap="$(apfs_read_block "$(rd_u64 "$nx" 0xA0)")"
-    tree="$(apfs_read_block "$(rd_u64 "$omap" 0x30)")"
+    nx="$(apfs_latest_nxsb)" || die "读取 NXSB 失败"
+    omap="$(apfs_read_block "$(rd_u64 "$nx" 0xA0)")" || die "读取 omap 块失败"
+    tree="$(apfs_read_block "$(rd_u64 "$omap" 0x30)")" || die "读取 omap 树块失败"
     flags=$(rd_u16 "$tree" 32)
     level=$(rd_u16 "$tree" 34)
     nkeys=$(rd_u32 "$tree" 36)
@@ -176,7 +188,7 @@ apfs_volumes() {
             idx=$(( idx + 1 ))
             paddr="$(apfs_omap_lookup "$tree" "$toc" "$keystart" "$valend" "$nkeys" "$oid")"
             if [ -n "$paddr" ]; then
-                blk="$(apfs_read_block "$paddr")"
+                blk="$(apfs_read_block "$paddr")" || die "s$idx: 读取卷超级块失败"
                 magic_is "$blk" 32 APSB || die "s$idx: 块 $paddr 不是卷超级块"
                 APFS_V_IDX[idx]="$idx"
                 APFS_V_PADDR[idx]="$paddr"
@@ -261,32 +273,89 @@ apfs_create_volumes() {   # names encrypt(0/1)
         flag=""
         case "$name" in *Data*) [ "$encrypt" -eq 1 ] && flag=" -P" ;; esac
         log "建卷 $name (role 0${flag:+, 加密})…"
-        rsh "/sbin/newfs_apfs -A$flag -v $name /dev/disk0s1"
+        # 实测：SEP 未就绪时 newfs_apfs -P 会无限挂起并锁死容器，必须带超时
+        rsh_timeout 120 "/sbin/newfs_apfs -A$flag -v $name /dev/disk0s1"
     done
     [ "$encrypt" -eq 1 ] && umount_vols /mnt1
     log "当前卷: $(slices)"
 }
 
-apfs_report_data_encryption() {   # data_name
-    local want="$1" i name flags
+# 卷是否存在（按 slice 号）
+apfs_vol_exists() {   # n
+    case " $(slices) " in *"disk0s1s$1 "*) return 0 ;; esac
+    return 1
+}
+
+# 卷名 → fs_flags（找不到返回 1）
+apfs_vol_fs_flags() {   # name → 打印 flags
+    local want="$1" i name
     apfs_volumes
     for i in "${APFS_V_IDX[@]}"; do
         name="$(dd if="${APFS_V_BLOCK[$i]}" bs=1 skip=$APFS_NAME_OFF count=256 2>/dev/null | LC_ALL=C tr -d '\000')"
         [ "$name" = "$want" ] || continue
-        flags="$(rd_u64 "${APFS_V_BLOCK[$i]}" $APFS_FS_FLAGS_OFF)"
-        if [ $(( flags & 1 )) -ne 0 ]; then
-            log "  $name 实际加密状态: UNENCRYPTED (apfs_fs_flags=0x$(printf '%x' "$flags"))"
-            warn "  $name 仍为 UNENCRYPTED：当前 ramdisk 的 newfs_apfs 未置加密位"
-        else
-            log "  $name 实际加密状态: encrypted (apfs_fs_flags=0x$(printf '%x' "$flags"))"
-        fi
+        rd_u64 "${APFS_V_BLOCK[$i]}" $APFS_FS_FLAGS_OFF
         return 0
     done
+    return 1
+}
+
+# 指定卷的加密状态：encrypted → 0，UNENCRYPTED → 1，找不到 → 2
+apfs_name_encrypted() {   # name
+    local flags
+    flags="$(apfs_vol_fs_flags "$1")" || return 2
+    [ $(( flags & 1 )) -eq 0 ] && return 0
+    return 1
+}
+
+apfs_report_data_encryption() {   # data_name
+    local want="$1" flags
+    if ! flags="$(apfs_vol_fs_flags "$want")"; then
+        warn "未找到卷 ${want}，无法核验加密状态"
+        return 0
+    fi
+    if [ $(( flags & 1 )) -ne 0 ]; then
+        log "  $want 实际加密状态: UNENCRYPTED (apfs_fs_flags=0x$(printf '%x' "$flags"))"
+        warn "  $want 仍为 UNENCRYPTED：当前 ramdisk 的 newfs_apfs 未置加密位"
+    else
+        log "  $want 实际加密状态: encrypted (apfs_fs_flags=0x$(printf '%x' "$flags"))"
+    fi
+    return 0
+}
+
+# 确保 DataB 以「可写」方式挂到 /mnt7（protect 优先，失败/只读则退回 plain）
+# 实机踩过：/mnt7 已挂载但只读，tar 写每个文件都报 "Operation not permitted"。
+mount_data_b() {
+    local dev="/dev/disk0s1s$T_MNT_DATA_B" mode mline
+    if ssh_run "/sbin/mount | /usr/bin/grep -q \"$dev on /mnt7\"" >/dev/null 2>&1; then
+        mline="$(ssh_run "/sbin/mount | /usr/bin/grep \" on /mnt7 \"" 2>/dev/null || true)"
+        if ssh_run "touch /mnt7/.n61-wt && rm -f /mnt7/.n61-wt" >/dev/null 2>&1; then
+            log "  DataB 已挂载: ${mline}"
+            return 0
+        fi
+        warn "DataB 已挂载但不可写（${mline}），重新挂载…"
+        umount_vols /mnt7
+    fi
+    for mode in protect plain; do
+        if [ "$mode" = protect ]; then
+            ssh_run "/sbin/mount_apfs -o protect $dev /mnt7" >/dev/null 2>&1 ||
+                { warn "DataB protect 挂载失败"; continue; }
+        else
+            ssh_run "/sbin/mount_apfs $dev /mnt7" >/dev/null 2>&1 ||
+                { warn "DataB plain 挂载失败"; continue; }
+        fi
+        if ssh_run "touch /mnt7/.n61-wt && rm -f /mnt7/.n61-wt" >/dev/null 2>&1; then
+            log "  DataB 挂载方式: ${mode}（可写）"
+            return 0
+        fi
+        warn "DataB 以 ${mode} 挂载后仍不可写，换一种方式…"
+        umount_vols /mnt7
+    done
+    die "DataB（${dev}）无法以可写方式挂载：SEP/容器状态异常"
 }
 
 # ---------- 改 role ----------
 apfs_set_roles() {   # "3:0x80 4:0x1 5:0x40" write(0/1)
-    local spec="$1" write="$2" pair idx role i name paddr blk old tmp bak
+    local spec="$1" write="$2" pair idx role i name paddr blk old tmp bak readback
     local mnts used_roles="" stamp
     apfs_volumes
     if [ "$write" -eq 1 ]; then
@@ -325,7 +394,8 @@ apfs_set_roles() {   # "3:0x80 4:0x1 5:0x40" write(0/1)
             dd of="$tmp" bs=1 seek=$(( APFS_ROLE_OFF )) count=2 conv=notrunc 2>/dev/null
         apfs_seal "$tmp"
         apfs_write_block "$paddr" "$tmp"
-        if ! cmp -s "$tmp" "$(apfs_read_block_fresh "$paddr")"; then
+        readback="$(apfs_read_block_fresh "$paddr")" || die "s$idx: 读回失败"
+        if ! cmp -s "$tmp" "$readback"; then
             die "s$idx: 读回不一致！用备份恢复: $bak"
         fi
         ok "  已写入并校验（备份: ${bak}）"

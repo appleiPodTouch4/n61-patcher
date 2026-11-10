@@ -63,16 +63,9 @@ tc_dyld_cache() {
 }
 
 # Health 库产物：由 Python 工具链（health_toolchain）派生，bash 侧复用其缓存
+# 解析逻辑统一放在 lib/health.sh（与 patch-rootfs 的部署共用一份缓存）
 tc_health_libs() {   # → 打印目录（没有就空行）
-    local cand
-    for cand in "${N56_HEALTH_LIBS:-}" \
-        "$WK/health-derive/project/phone_apps_bringup/20261029/full/repair-v7/libraries" \
-        "$REPO/state/health-libraries"; do
-        [ -n "$cand" ] && [ -d "$cand" ] || continue
-        printf '%s\n' "$cand"
-        return 0
-    done
-    printf '\n'
+    health_libs_dir || printf '\n'
 }
 
 # N66 上被搬到 iOS13 的界面 App 里的 Mach-O

@@ -164,7 +164,7 @@ cydia_fetch() {   # url [sha256] → 本地路径
     path="$REPO/ipsw/cache/cydia/$name"
     mkdir -p "$(dirname "$path")"
     if [ ! -f "$path" ]; then
-        log "  下载 $name…"
+        log "  下载 ${name}…"
         curl -fL --retry 3 --connect-timeout 20 -o "$path.part" "$url" ||
             die "下载失败: $url"
         mv "$path.part" "$path"

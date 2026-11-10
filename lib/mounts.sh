@@ -76,12 +76,27 @@ DEVICE_S1_VERIFIED=0
 verify_device_system() {
     [ "$DEVICE_S1_VERIFIED" -eq 1 ] && return 0
     mount_vol "$T_MNT_SYSTEM12" /mnt1 ro
-    local actual expect path
+    local actual="" expect path tmp
     path="/mnt1/System/Library/CoreServices/SystemVersion.plist"
-    actual="$(ssh_run "/binpack/usr/bin/plutil -extract ProductBuildVersion raw -o - \"$path\" 2>/dev/null" 2>/dev/null || true)"
+
+    # 1) 设备端 plutil（有就用；不同 ramdisk 的路径不一样）
+    actual="$(ssh_run "for p in /usr/bin/plutil /binpack/usr/bin/plutil; do
+        if [ -x \"\$p\" ]; then \"\$p\" -extract ProductBuildVersion raw -o - \"$path\" 2>/dev/null && exit 0; fi
+    done" 2>/dev/null || true)"
+
+    # 2) 拉回本机用 macOS plutil 解析（XML/二进制 plist 都支持，等价 Python 的 plistlib）
+    if [ -z "$actual" ]; then
+        tmp="$WORK/s1-SystemVersion.plist"
+        rm -f "$tmp"
+        if ssh_run "cat \"$path\"" >"$tmp" 2>/dev/null && [ -s "$tmp" ]; then
+            actual="$(/usr/bin/plutil -extract ProductBuildVersion raw -o - "$tmp" 2>/dev/null || true)"
+        fi
+    fi
+
+    # 3) 最后一层兜底：XML 文本里取 <string> 内容（不能把标签字母也算进去）
     if [ -z "$actual" ]; then
         actual="$(ssh_run "cat \"$path\"" 2>/dev/null | tr -d '\000' |
-            awk '/ProductBuildVersion/{getline; gsub(/[^A-Za-z0-9]/,""); print; exit}')"
+            awk '/ProductBuildVersion/{getline; sub(/.*<string>/,""); sub(/<\/string>.*/,""); gsub(/[[:space:]]/,""); print; exit}')"
     fi
     expect="$(target_build "${T_MODEL%ap}")"
     if [ -n "$expect" ] && [ "$actual" != "$expect" ]; then

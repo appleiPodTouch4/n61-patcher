@@ -187,10 +187,14 @@ ov_item() {   # source dest op mode uid gid offset before after checks
 ov_apply_items_file() {   # file
     local file="$1" source dest op mode uid gid offset before after checks
     [ -f "$file" ] || die "缺少 overlay 清单: $file"
-    while IFS="$(printf '\t')" read -r source dest op mode uid gid offset before after checks; do
+    # 两个坑：
+    #  1) fd 3 读清单：循环体里的 ssh 会继承 stdin；
+    #  2) IFS 不能用 tab：tab 属于 IFS 空白，read 会把连续的 tab 合并、丢掉空字段
+    #     （fairplayd 的 checks=plist=1 曾因此落到 mode 里）。这里把 tab 换成 0x02 再读。
+    while IFS=$'\002' read -r -u 3 source dest op mode uid gid offset before after checks; do
         [ -n "$source" ] || continue
         ov_item "$source" "$dest" "$op" "$mode" "$uid" "$gid" "$offset" "$before" "$after" "$checks"
-    done <"$file"
+    done 3< <(tr '\t' '\002' <"$file")
 }
 
 # ---------- 按 donor 实况展开 UI 资源（@3x 缺省，4.7" 落 @2x）----------
@@ -316,6 +320,27 @@ ov_boot_ui_scan() {   # donor j96 out
             ov_is_macho "$donor/$root/$rel" && continue
             printf '%s\n' "$rel"
         done | sed "s#^#$root/#" >>"$out"
+}
+
+# 通用：某棵树下的图标资源（Assets.car / AppIcon* / *Icon*@3x），只取两边都存在的 app
+ov_icon_scan_root() {   # donor j96 root out
+    local donor="$1" j96="$2" root="$3" out="$4" rel app bn ok
+    mkdir -p "$(dirname "$out")"
+    : >"$out"
+    [ -d "$donor/$root" ] || return 0
+    ov_rsync_diffs "$donor/$root" "$j96/$root" |
+    while IFS= read -r rel; do
+        app="${rel%%/*}"
+        [ -d "$j96/$root/$app" ] || continue
+        bn="${rel##*/}"
+        ok=0
+        case "$bn" in
+            AppIcon*|"Assets.car") ok=1 ;;
+            *Icon*) case "$bn" in *@3x*) ok=1 ;; esac ;;
+        esac
+        [ "$ok" -eq 1 ] || continue
+        printf '%s/%s\n' "$root" "$rel"
+    done >>"$out"
 }
 
 ov_app_icon_scan() {   # donor j96 out
@@ -454,6 +479,9 @@ ov_apply() {   # id
         rootfs.cydia)
             cydia_install
             ;;
+        rootfs.health)
+            health_apply
+            ;;
         *)
             ov_apply_items_file "$REPO/patches/overlays/$id.conf"
             ;;
@@ -497,6 +525,20 @@ ov_apply_phone_ui() {
         [ -e "$donor/$rel" ] || die "$T_UI_DONOR 17H35 缺少 $rel"
         deploy_path "$donor/$rel" "$OV_MNT/$rel"
     done
+
+    # iOS13 的 Mail/Maps/Notes 等系统 App 在 private/var/staged_system_apps，
+    # j96(iPad) 的 Assets.car 只有 pad idiom，iPhone 会显示白色占位图标。
+    # 这里补 n71 的图标资源（二进制与 j96 相同，只换资源）。
+    local staged="$WK/phone-ui/staged-icons.txt"
+    ov_icon_scan_root "$donor" "$j96" "private/var/staged_system_apps" "$staged"
+    if [ -s "$staged" ]; then
+        if [ -d "$OV_MNT/private/var/staged_system_apps" ]; then
+            log "  覆盖 $(wc -l <"$staged" | tr -d ' ') 份 staged App 图标…"
+            deploy_relative_paths "$donor" "$OV_MNT" "$staged"
+        else
+            warn "目标 rootfs 没有 private/var/staged_system_apps，跳过 staged 图标"
+        fi
+    fi
 
     rsh "rm -f $OV_MNT/usr/libexec/n56-register-apps \
         $OV_MNT/usr/libexec/n56-app-identifiers.plist \

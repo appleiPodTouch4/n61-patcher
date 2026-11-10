@@ -13,7 +13,18 @@ load_target() {
             [ -f "$path" ] || path="${REPO}/targets/$name.sh"
             ;;
     esac
-    [ -f "$path" ] || die "找不到目标清单: ${name}（${REPO}/targets/）"
+    if [ ! -f "$path" ]; then
+        local py=""
+        if [ -f "${path%.sh}.py" ]; then
+            py="${path%.sh}.py"
+        elif [ "${name#/}" = "$name" ] && [ -f "${REPO}/targets/${name//-/_}.py" ]; then
+            py="${REPO}/targets/${name//-/_}.py"
+        fi
+        if [ -n "$py" ]; then
+            die "找不到 bash 目标清单: ${path}（仓库里只有 Python 清单 ${py}；bash 版尚未提供该机型清单）"
+        fi
+        die "找不到目标清单: ${name}（${REPO}/targets/）"
+    fi
     # shellcheck disable=SC1090
     . "$path"
     T_PATH="$path"
@@ -31,7 +42,7 @@ donor_dir() { printf '%s\n' "${N56_DONORS:-$REPO/${T_SOURCE_ROOT:-donors}}"; }
 
 # 从 IPSW 派生的构建输入（与 Python 版 core/context.py 的 derived 等价）
 derived_path() {
-    local key="$1" rel
+    local key="$1" rel p
     case "$key" in
         ibss_src)  rel="$T_DERIVED_IBSS" ;;
         ibec_dec)  rel="$T_DERIVED_IBEC" ;;
@@ -39,7 +50,12 @@ derived_path() {
         trustcache) rel="$T_DERIVED_TRUSTCACHE" ;;
         *) die "未声明派生输入: $key" ;;
     esac
-    printf '%s\n' "$REPO/ipsw/cache/derived/$rel"
+    p="$REPO/ipsw/cache/derived/$rel"
+    [ -f "$p" ] || die "缺少派生输入 ${key}: ${p}
+  bash 版不从 IPSW 现场派生（iBSS/iBEC 解密需要设备处于 DFU）。请先用 Python 版生成：
+    sudo python3 n56patcher.py all --target ${T_NAME}
+  或把文件放到上述路径。"
+    printf '%s\n' "$p"
 }
 
 # IM4M（刷机后重提，build 签名用）
@@ -80,7 +96,7 @@ rootfs_dmg() {
     cache="$REPO/ipsw/cache/$entry"
     [ -f "$cache" ] && { printf '%s\n' "$cache"; return; }
     [ -f "$REPO/ipsw/$ipsw" ] || die "找不到 $kind IPSW: ipsw/$ipsw"
-    log "从 $kind IPSW 提取 $entry…" >&2
+    log "从 $kind IPSW 提取 ${entry}…" >&2
     mkdir -p "$REPO/ipsw/cache"
     ( cd "$REPO/ipsw/cache" && unzip -o -q "../$ipsw" "$entry" ) || die "IPSW 提取失败: $entry"
     [ -f "$cache" ] || die "IPSW 中没有 $entry"
@@ -97,7 +113,9 @@ setup_workdir() {
         WORK="$REPO/build/${T_NAME}-latest"
     fi
     case "$WORK" in /*) ;; *) WORK="$REPO/$WORK" ;; esac
-    [ "$OPT_DRY_RUN" -eq 1 ] || mkdir -p "$WORK"
+    if [ "${OPT_DRY_RUN:-0}" -ne 1 ]; then
+        mkdir -p "$WORK" || die "无法创建工作目录: ${WORK}"
+    fi
     WK="$WORK"
 }
 

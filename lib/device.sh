@@ -8,12 +8,26 @@ device_query() { irec -q 2>/dev/null || true; }
 device_in_dfu() { device_query | grep -q "MODE: DFU"; }
 
 devices_present() { device_query | grep -q "CPID"; }
+device_in_recovery() { device_query | grep -qE "MODE: (DFU|Recovery)"; }
 
 wait_dfu() {
-    log "等待设备进入 DFU（关机后按住 Home+电源）…"
+    local timeout="${N61_DFU_TIMEOUT:-900}" waited=0
+    have_tool irecovery || die "缺少工具: irecovery（先跑 tools/setup.py 或设 LIOS_BIN）"
+    if [ "$timeout" -gt 0 ]; then
+        log "等待设备进入 DFU（关机后按住 Home+电源，最长 ${timeout}s）…"
+    else
+        log "等待设备进入 DFU（关机后按住 Home+电源）…"
+    fi
     while :; do
         device_in_dfu && return 0
+        if [ "$timeout" -gt 0 ] && [ "$waited" -ge "$timeout" ]; then
+            die "等待 DFU 超时（${timeout}s）：确认设备已连接并进入 DFU；可用 N61_DFU_TIMEOUT=秒数 调整（0 = 无限等待）"
+        fi
         sleep 1
+        waited=$(( waited + 1 ))
+        if [ $(( waited % 30 )) -eq 0 ]; then
+            log "仍在等待 DFU…（${waited}s）"
+        fi
     done
 }
 
@@ -58,7 +72,7 @@ send_ramdisk_chain() {
     irec -f "$(img kernelcache)" >/dev/null
     irec -c bootx >/dev/null
     log "ramdisk 启动链已发送，等待 SSH 就绪…"
-    ssh_wait 120
+    ssh_wait 180 1
 }
 
 # 设备身份校验（boot 前）

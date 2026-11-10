@@ -751,7 +751,7 @@ kc_wifi() {   # in out
     fwdir="$REPO/ipsw/cache/derived/wifi"
     for ext in trx clmb txcb; do
         [ -f "$fwdir/C-4345__s-B1/${module}.$ext" ] ||
-            { rm -rf "$wd"; die "wifi: 缺少板上固件 $fwdir/C-4345__s-B1/${module}.$ext（由 12.5.8 提取）"; }
+            { rm -rf "$wd"; die "wifi: 缺少板上固件 $fwdir/C-4345__s-B1/${module}.${ext}（由 12.5.8 提取）"; }
     done
 
     cp "$in" "$out"

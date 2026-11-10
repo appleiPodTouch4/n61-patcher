@@ -31,11 +31,9 @@ file_patch_hex() {   # file offset before after
 ensure_systembag() {
     local device mode helper framework sdk native out
     ensure_sep     # 需已只读挂载 /mnt1
-    device="/dev/disk0s1s$T_MNT_DATA_B"
-    mode="$(ssh_run "/sbin/mount | /usr/bin/grep -q \"$device on /mnt7\" && echo mounted ||
-        { /sbin/mount_apfs -o protect $device /mnt7 && echo protect ||
-        { /sbin/mount_apfs $device /mnt7 && echo plain; }; }" 2>/dev/null | tail -1)"
-    log "  DataB 挂载方式: ${mode:-未知}"
+    # 必须确认挂载成功且可写：挂载失败时 /mnt7 只是 ramdisk 里的空目录，
+    # 继续写 systembag/private/var 会静默写进 ramdisk，DataB 仍是空的（开机即挂）。
+    mount_data_b
     if [ "$(ssh_run 'test -s /mnt7/keybags/systembag.kb && echo yes || true' 2>/dev/null)" = "yes" ]; then
         log "  systembag 已存在，跳过创建。"
         return 0
